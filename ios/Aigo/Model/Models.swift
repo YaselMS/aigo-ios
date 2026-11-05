@@ -28,6 +28,9 @@ struct SessionInfo: Codable, Identifiable, Equatable {
     var viewed: Bool?
     var restored: Bool?
     var resumable: Bool?
+    var cols: Int?
+    var rows: Int?
+    var lastOutputAt: String?
 }
 
 /// inbox.Item (internal/inbox/inbox.go).
@@ -128,6 +131,7 @@ struct Snapshot: Codable {
     var host: HostInfo?
     var sessions: [SessionInfo]?
     var inbox: [InboxItem]?
+    var notifications: [HostNotice]?
 }
 
 /// notify.Notification (internal/notify/notify.go), data of `notify` events.
@@ -139,6 +143,7 @@ struct HostNotice: Codable {
     var sessionId: String?
     var agent: String?
     var actionId: String?
+    var at: String?
 }
 
 struct EventEnvelope: Decodable {
@@ -161,6 +166,13 @@ struct TranscriptFrame: Decodable {
     var error: String?
 }
 
+/// JSON frames of WS /api/v1/sessions/{id}/attach (output itself is binary).
+struct AttachFrame: Decodable {
+    var type: String
+    var session: SessionInfo?
+    var code: Int?
+}
+
 /// POST /api/v1/pairing/complete response.
 struct PairResponse: Decodable {
     var token: String
@@ -170,4 +182,30 @@ struct PairResponse: Decodable {
 
 struct ErrorBody: Decodable {
     var error: String?
+}
+
+/// Go marshals time.Time as RFC 3339 with up to 9 fractional digits; the
+/// zero time ("0001-01-01T00:00:00Z") means "not set".
+enum AigoDate {
+    private static let plain: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+
+    static func parse(_ raw: String?) -> Date? {
+        guard var s = raw, s.count >= 20 else { return nil }
+        if s.hasPrefix("0001-") { return nil }
+        var fraction = 0.0
+        if let dot = s.firstIndex(of: ".") {
+            var end = s.index(after: dot)
+            while end < s.endIndex, s[end].isNumber {
+                end = s.index(after: end)
+            }
+            fraction = Double("0" + String(s[dot..<end])) ?? 0
+            s.removeSubrange(dot..<end)
+        }
+        guard let d = plain.date(from: s) else { return nil }
+        return d.addingTimeInterval(fraction)
+    }
 }

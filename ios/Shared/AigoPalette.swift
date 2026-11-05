@@ -11,15 +11,23 @@ extension Color {
     }
 }
 
-/// Aigo visual identity, shared by the app and the widget extension.
+/// Aigo visual identity (style A, "Lanes"), shared by the app and the widget extension.
 enum AigoPalette {
-    static let background = Color(aigoHex: 0x0F1012)  // graphite
-    static let surface = Color(aigoHex: 0x17191C)
-    static let surfaceRaised = Color(aigoHex: 0x202327)
-    static let line = Color(aigoHex: 0x2C3035)
-    static let text = Color(aigoHex: 0xECEDEA)
-    static let secondary = Color(aigoHex: 0xA4A8AD)
-    static let lime = Color(aigoHex: 0xC6F432)   // alive / working / primary action
-    static let coral = Color(aigoHex: 0xFF7A59)  // needs you
-    static let ice = Color(aigoHex: 0x8FB8C9)    // done
+    static let background = Color(aigoHex: 0x0B0C0E)    // graphite
+    static let surface = Color(aigoHex: 0x121417)       // cards, rows
+    static let surfaceRaised = Color(aigoHex: 0x191C20) // inputs, chips
+    static let line = Color(aigoHex: 0x23262B)          // borders
+    static let lineSoft = Color(aigoHex: 0x1A1D21)      // timeline rail, separators
+    static let text = Color(aigoHex: 0xE6E7E3)
+    static let secondary = Color(aigoHex: 0x9DA1A6)
+    static let idle = Color(aigoHex: 0x5E636B)
+    static let lime = Color(aigoHex: 0xC6F432)          // alive / working / primary action
+    static let coral = Color(aigoHex: 0xFF7A59)         // needs you
+    static let ice = Color(aigoHex: 0x8FB8C9)           // done
+    static let coralWash = Color(aigoHex: 0x1C0F0B)     // background of a "needs you" card
+    static let coralText = Color(aigoHex: 0xFFB29C)
+    static let coralCode = Color(aigoHex: 0xFFD3C6)
+    static let coralLine = Color(aigoHex: 0x3A2A25)
+    static let onAccent = Color(aigoHex: 0x0B0C0E)      // text on lime
+    static let onCoral = Color(aigoHex: 0x1A0B06)       // text on coral
 }

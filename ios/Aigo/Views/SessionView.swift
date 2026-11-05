@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 enum SessionTab: Hashable {
     case chat
@@ -11,17 +12,30 @@ struct SessionView: View {
     @EnvironmentObject private var store: AppStore
     @Environment(\.dismiss) private var dismiss
     @StateObject private var transcript = TranscriptModel()
+    @StateObject private var terminal = TerminalModel()
     @State private var tab: SessionTab = .chat
-    @State private var screen: ScreenState?
     @State private var draft = ""
+    @State private var termLine = ""
     @State private var sending = false
     @State private var banner: String?
     @State private var confirmKill = false
     @State private var confirmRemove = false
     @State private var pickedDefaultTab = false
+    @AppStorage("terminalFontSize") private var termFont: Double = 12
+    @AppStorage("terminalFit") private var termFit = false
+    @FocusState private var focus: Field?
+
+    private enum Field: Hashable {
+        case chat
+        case terminal
+    }
 
     private var session: SessionInfo? {
         store.session(id: sessionID)
+    }
+
+    private var screen: ScreenState? {
+        terminal.screen
     }
 
     var body: some View {
@@ -43,30 +57,37 @@ struct SessionView: View {
                     if tab == .chat && s.isAgent {
                         ChatView(model: transcript)
                     } else {
-                        TerminalView(text: screen?.text ?? "")
+                        TerminalPane(model: terminal, fontSize: $termFont, fit: fitBinding)
+                            .onTapGesture {
+                                focus = .terminal
+                            }
                     }
                 }
                 .frame(maxHeight: .infinity)
 
                 bottomArea(s)
             } else {
-                ContentUnavailableView("Session ended",
-                                       systemImage: "moon.zzz",
-                                       description: Text("This session was removed on the PC."))
-                    .frame(maxHeight: .infinity)
+                ContentUnavailableView {
+                    Label("Session ended", systemImage: "moon.zzz")
+                } description: {
+                    Text("This session was removed on the PC.")
+                } actions: {
+                    Button("Back to Home") { dismiss() }
+                        .buttonStyle(FilledButtonStyle())
+                        .frame(maxWidth: 240)
+                }
+                .frame(maxHeight: .infinity)
             }
         }
         .background(Theme.bg.ignoresSafeArea())
         .navigationTitle(session?.displayTitle ?? "Session")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(Theme.bg, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 actionsMenu
             }
-        }
-        .task(id: sessionID) {
-            await pollScreen()
         }
         .onAppear {
             store.sendViewing(sessionID)
@@ -76,15 +97,30 @@ struct SessionView: View {
                     tab = .terminal
                 }
             }
-            if let c = store.client, session?.isAgent ?? true {
-                transcript.start(client: c, sessionID: sessionID)
-            }
+            startStreams()
         }
         .onDisappear {
             transcript.stop()
+            terminal.stop()
+        }
+        .onChange(of: tab) { _, newTab in
+            terminal.debounceNanos = newTab == .terminal ? 150_000_000 : 600_000_000
+            terminal.setFit(newTab == .terminal && termFit)
+            focus = nil
+            Haptics.selection()
+        }
+        .onChange(of: session?.isRunning ?? false) { wasRunning, running in
+            if running && !wasRunning {
+                terminal.reconnect()
+                if let c = store.client, session?.isAgent ?? false {
+                    transcript.stop()
+                    transcript.start(client: c, sessionID: sessionID)
+                }
+            }
         }
         .confirmationDialog("Kill this session?", isPresented: $confirmKill, titleVisibility: .visible) {
             Button("Kill", role: .destructive) {
+                Haptics.warning()
                 act { await store.kill(sessionID) }
             }
         } message: {
@@ -105,50 +141,66 @@ struct SessionView: View {
         }
     }
 
+    private var fitBinding: Binding<Bool> {
+        Binding(get: { termFit }, set: { on in
+            termFit = on
+            terminal.setFit(on)
+        })
+    }
+
+    private func startStreams() {
+        guard let c = store.client else { return }
+        let running = session?.isRunning ?? false
+        terminal.debounceNanos = tab == .terminal ? 150_000_000 : 600_000_000
+        terminal.start(client: c, sessionID: sessionID, running: running)
+        if tab == .terminal && termFit {
+            terminal.setFit(true)
+        }
+        if session?.isAgent ?? true {
+            transcript.start(client: c, sessionID: sessionID)
+        }
+    }
+
     // MARK: - Pieces
 
     private func statusStrip(_ s: SessionInfo) -> some View {
         HStack(spacing: 10) {
             StatusDot(status: s.status)
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(s.subtitle)
-                    .font(.footnote)
+                    .font(Theme.monoCaption)
                     .foregroundStyle(Theme.secondary)
                     .lineLimit(1)
+                    .truncationMode(.middle)
                 Text(nowText(s))
                     .font(.footnote)
-                    .foregroundStyle(Theme.text)
-                    .lineLimit(1)
+                    .foregroundStyle(s.status == .needsYou ? Theme.coralText : Theme.text)
+                    .lineLimit(2)
+                    .contentTransition(.opacity)
             }
-            Spacer()
+            Spacer(minLength: 4)
             if s.isRunning && (s.status == .working || s.status == .stalled) {
                 Button {
+                    Haptics.tap()
                     act { await store.interrupt(sessionID) }
                 } label: {
-                    Label("Stop turn", systemImage: "stop.fill")
-                        .font(.footnote.weight(.semibold))
-                        .padding(.horizontal, 12)
-                        .frame(minHeight: 36)
-                        .background(Theme.surface2, in: Capsule())
+                    Label("Stop", systemImage: "stop.fill")
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(Theme.text)
+                .buttonStyle(ChipButtonStyle())
+                .accessibilityLabel(Text("Stop turn"))
             } else if !s.isRunning {
                 Button {
+                    Haptics.tap()
                     act { await store.restart(sessionID) }
                 } label: {
                     Label(s.isAgent ? "Resume" : "Restart", systemImage: "arrow.clockwise")
-                        .font(.footnote.weight(.semibold))
-                        .padding(.horizontal, 12)
-                        .frame(minHeight: 36)
-                        .background(Theme.lime, in: Capsule())
-                        .foregroundStyle(Theme.bg)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(ChipButtonStyle(fill: Theme.lime, foreground: Theme.onAccent))
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
+        .animation(.easeInOut(duration: 0.2), value: s.status)
     }
 
     private func nowText(_ s: SessionInfo) -> String {
@@ -160,66 +212,128 @@ struct SessionView: View {
 
     @ViewBuilder
     private func bottomArea(_ s: SessionInfo) -> some View {
+        let pending = store.pendingItems(for: sessionID)
         VStack(spacing: 8) {
             if let banner = banner {
                 InlineBanner(text: banner) {
-                    self.banner = nil
+                    withAnimation { self.banner = nil }
                 }
+                .transition(.opacity)
             }
-            if let menu = screen?.menu, let options = menu.options, !options.isEmpty, s.isRunning {
+            if let item = pending.first {
+                AttentionCard(item: item, swipeEnabled: false,
+                              position: pending.count > 1 ? "1 of \(pending.count)" : nil,
+                              inSession: true)
+                    .id(item.id)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+            if let menu = screen?.menu, let options = menu.options, !options.isEmpty, s.isRunning,
+               !pending.contains(where: { $0.kind == "question" && !($0.options ?? []).isEmpty }) {
                 MenuChoices(title: menu.title, options: options) { option in
+                    Haptics.approve()
                     act {
                         let err = await store.chooseMenu(sessionID, number: option.number, label: option.label)
-                        await refreshScreen()
+                        terminal.scheduleRefresh(immediate: true)
                         return err
                     }
                 }
-            }
-            if tab == .terminal || !s.isAgent {
-                KeyBar { key in
-                    act { await store.sendKeys(sessionID, [key]) }
-                }
+                .transition(.opacity)
             }
             if s.isRunning {
-                composer
+                if tab == .terminal || !s.isAgent {
+                    KeyBar { key in
+                        Haptics.tap()
+                        act { await terminal.send(key.bytes) }
+                    }
+                    terminalField
+                } else {
+                    composer
+                }
             }
         }
         .padding(.horizontal, 12)
         .padding(.top, 8)
         .padding(.bottom, 8)
         .background(Theme.bg)
+        .animation(.easeInOut(duration: 0.25), value: pending.map { $0.id })
+        .animation(.easeInOut(duration: 0.2), value: screen?.menu?.options?.count ?? 0)
     }
 
     private var composer: some View {
         HStack(alignment: .bottom, spacing: 8) {
-            TextField(tab == .terminal ? "Type a command" : "Message", text: $draft, axis: .vertical)
+            TextField("Message", text: $draft, axis: .vertical)
                 .lineLimit(1...5)
-                .textInputAutocapitalization(tab == .terminal ? TextInputAutocapitalization.never : TextInputAutocapitalization.sentences)
-                .autocorrectionDisabled(tab == .terminal)
-                .font(tab == .terminal ? Theme.mono : .body)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(Theme.surface2, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .focused($focus, equals: .chat)
+                .submitLabel(.send)
+                .textInputAutocapitalization(.sentences)
+                .font(.body)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 11)
+                .background(Theme.surface2, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Theme.line, lineWidth: 1))
                 .foregroundStyle(Theme.text)
+                .onChange(of: draft) { _, value in
+                    // Return sends (the multi-line field would otherwise insert a newline).
+                    if value.hasSuffix("\n") {
+                        draft = String(value.dropLast())
+                        send()
+                    }
+                }
+                .onSubmit { send() }
             Button {
                 send()
             } label: {
                 Group {
                     if sending {
-                        ProgressView().tint(Theme.bg)
+                        ProgressView().tint(Theme.onAccent)
                     } else {
                         Image(systemName: "arrow.up")
-                            .font(.headline)
+                            .font(.headline.weight(.bold))
                     }
                 }
-                .frame(width: 44, height: 44)
+                .frame(width: 46, height: 46)
                 .background(canSend ? Theme.lime : Theme.surface2, in: Circle())
-                .foregroundStyle(canSend ? Theme.bg : Theme.secondary)
+                .foregroundStyle(canSend ? Theme.onAccent : Theme.secondary)
             }
             .buttonStyle(.plain)
             .disabled(!canSend)
             .accessibilityLabel(Text("Send"))
         }
+    }
+
+    /// One line of shell input; Return sends it (plus Enter) as raw bytes.
+    private var terminalField: some View {
+        HStack(spacing: 8) {
+            Text("›")
+                .font(.system(.body, design: .monospaced).weight(.bold))
+                .foregroundStyle(Theme.lime)
+            TextField("Type and press Return", text: $termLine)
+                .focused($focus, equals: .terminal)
+                .font(Theme.mono)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled(true)
+                .submitLabel(.send)
+                .foregroundStyle(Theme.text)
+                .onSubmit {
+                    sendTerminalLine()
+                }
+            Button {
+                sendTerminalLine()
+            } label: {
+                Image(systemName: "return")
+                    .font(.body.weight(.semibold))
+                    .frame(width: 44, height: 40)
+                    .background(Theme.lime, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .foregroundStyle(Theme.onAccent)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Text("Send line"))
+        }
+        .padding(.leading, 14)
+        .padding(.trailing, 4)
+        .padding(.vertical, 4)
+        .background(Theme.surface2, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Theme.line, lineWidth: 1))
     }
 
     private var canSend: Bool {
@@ -235,10 +349,15 @@ struct SessionView: View {
                     } label: {
                         Label("Stop turn", systemImage: "stop.circle")
                     }
+                    Button {
+                        act { await terminal.send("\u{03}") }
+                    } label: {
+                        Label("Send Ctrl-C", systemImage: "keyboard")
+                    }
                     Button(role: .destructive) {
                         confirmKill = true
                     } label: {
-                        Label("Kill", systemImage: "xmark.octagon")
+                        Label("Kill…", systemImage: "xmark.octagon")
                     }
                 } else {
                     Button {
@@ -247,10 +366,18 @@ struct SessionView: View {
                         Label(s.isAgent ? "Resume" : "Restart", systemImage: "arrow.clockwise")
                     }
                 }
+                if let cwd = s.cwd, !cwd.isEmpty {
+                    Button {
+                        UIPasteboard.general.string = cwd
+                        Haptics.success()
+                    } label: {
+                        Label("Copy folder path", systemImage: "doc.on.doc")
+                    }
+                }
                 Button(role: .destructive) {
                     confirmRemove = true
                 } label: {
-                    Label("Remove session", systemImage: "trash")
+                    Label("Remove session…", systemImage: "trash")
                 }
             }
         } label: {
@@ -264,45 +391,36 @@ struct SessionView: View {
 
     private func send() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty, !sending else { return }
         sending = true
         banner = nil
+        Haptics.tap()
         Task {
             if let err = await store.sendPrompt(sessionID, text) {
-                banner = err
+                Haptics.error()
+                withAnimation { banner = err }
             } else {
                 draft = ""
             }
             sending = false
-            await refreshScreen()
+            terminal.scheduleRefresh()
         }
+    }
+
+    private func sendTerminalLine() {
+        let line = termLine
+        termLine = ""
+        focus = .terminal
+        act { await terminal.send(line + "\r") }
     }
 
     private func act(_ op: @escaping () async -> String?) {
         banner = nil
         Task {
             if let err = await op() {
-                banner = err
+                Haptics.error()
+                withAnimation { banner = err }
             }
-        }
-    }
-
-    private func refreshScreen() async {
-        guard let c = store.client else { return }
-        if let s = try? await c.screen(sessionID) {
-            screen = s
-        }
-    }
-
-    /// Polls the screen endpoint while visible: every second on the
-    /// Terminal tab, every two on Chat (menu detection).
-    private func pollScreen() async {
-        while !Task.isCancelled {
-            if session?.isRunning ?? false || screen == nil {
-                await refreshScreen()
-            }
-            let interval: UInt64 = tab == .terminal ? 1_000_000_000 : 2_000_000_000
-            try? await Task.sleep(nanoseconds: interval)
         }
     }
 }
@@ -316,24 +434,23 @@ struct MenuChoices: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                Circle().fill(Theme.coral).frame(width: 7, height: 7)
+                Circle().fill(Theme.coral).frame(width: 8, height: 8)
                 Text((title ?? "").isEmpty ? "The agent is asking" : title!)
                     .font(.footnote.weight(.semibold))
-                    .foregroundStyle(Theme.text)
+                    .foregroundStyle(Theme.coralText)
                     .lineLimit(3)
             }
             if options.count > 4 {
                 ScrollView {
                     optionList
                 }
-                .frame(height: 220)
+                .frame(maxHeight: 220)
             } else {
                 optionList
             }
         }
-        .padding(10)
-        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.coral.opacity(0.35), lineWidth: 1))
+        .padding(12)
+        .aigoCard(border: Theme.coral.opacity(0.6), fill: Theme.coralWash)
     }
 
     private var optionList: some View {
@@ -350,53 +467,33 @@ struct MenuChoices: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
-                .buttonStyle(OutlineButtonStyle())
+                .buttonStyle(OutlineButtonStyle(border: Theme.coralLine))
             }
         }
     }
 }
 
-/// Terminal keys for TUIs (named keys accepted by internal/sessions/keys.go).
+/// Terminal keys for shells and TUIs, sent as raw bytes.
 struct KeyBar: View {
-    struct KeyDef: Identifiable {
-        let label: String
-        let key: String
-        var id: String { key }
-    }
-
-    let onKey: (String) -> Void
-
-    private static let keys: [KeyDef] = [
-        KeyDef(label: "Esc", key: "Escape"),
-        KeyDef(label: "Tab", key: "Tab"),
-        KeyDef(label: "↑", key: "Up"),
-        KeyDef(label: "↓", key: "Down"),
-        KeyDef(label: "←", key: "Left"),
-        KeyDef(label: "→", key: "Right"),
-        KeyDef(label: "Enter", key: "Enter"),
-        KeyDef(label: "Ctrl-C", key: "C-c"),
-        KeyDef(label: "1", key: "1"),
-        KeyDef(label: "2", key: "2"),
-        KeyDef(label: "3", key: "3"),
-        KeyDef(label: "y", key: "y"),
-        KeyDef(label: "n", key: "n"),
-    ]
+    let onKey: (TerminalKeys.Key) -> Void
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
-                ForEach(KeyBar.keys) { k in
+                ForEach(TerminalKeys.bar) { k in
                     Button {
-                        onKey(k.key)
+                        onKey(k)
                     } label: {
                         Text(k.label)
                             .font(.system(.callout, design: .monospaced).weight(.semibold))
                             .foregroundStyle(Theme.text)
                             .padding(.horizontal, 10)
-                            .frame(minWidth: 44, minHeight: 40)
-                            .background(Theme.surface2, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .frame(minWidth: 44, minHeight: 44)
+                            .background(Theme.surface2, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Theme.line, lineWidth: 1))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(Text(k.accessibility))
                 }
             }
         }

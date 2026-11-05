@@ -63,6 +63,9 @@ final class PinnedSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskD
             return (.cancelAuthenticationChallenge, nil)
         }
         if !expected.isEmpty && presented == expected {
+            lock.lock()
+            _lastMismatch = nil
+            lock.unlock()
             return (.useCredential, URLCredential(trust: trust))
         }
         lock.lock()

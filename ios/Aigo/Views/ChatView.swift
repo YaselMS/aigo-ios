@@ -1,4 +1,6 @@
+import Combine
 import SwiftUI
+import UIKit
 
 struct ChatView: View {
     @ObservedObject var model: TranscriptModel
@@ -16,11 +18,17 @@ struct ChatView: View {
                     }
                     let items = model.visible
                     if items.isEmpty {
-                        Text(model.waiting ? "Waiting for the conversation to start…" : "No messages yet.")
-                            .font(.callout)
-                            .foregroundStyle(Theme.secondary)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .padding(.top, 40)
+                        VStack(spacing: 10) {
+                            if model.waiting && model.error == nil {
+                                ProgressView().tint(Theme.secondary)
+                            }
+                            Text(model.waiting ? "Waiting for the conversation to start…" : "No messages yet. Say what it should do.")
+                                .font(.callout)
+                                .foregroundStyle(Theme.secondary)
+                                .multilineTextAlignment(.center)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.top, 48)
                     }
                     ForEach(items) { message in
                         MessageRow(message: message)
@@ -35,8 +43,8 @@ struct ChatView: View {
                         .frame(height: 1)
                         .id("chat-bottom")
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
             }
             .scrollDismissesKeyboard(.interactively)
             .onChange(of: model.bottomTick) { _, _ in
@@ -46,6 +54,11 @@ struct ChatView: View {
             }
             .onAppear {
                 proxy.scrollTo("chat-bottom", anchor: .bottom)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidShowNotification)) { _ in
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo("chat-bottom", anchor: .bottom)
+                }
             }
         }
     }
@@ -81,8 +94,8 @@ struct MessageRow: View {
                     .foregroundStyle(Theme.text)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 9)
-                    .background(Theme.lime.opacity(0.16), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Theme.lime.opacity(0.35), lineWidth: 1))
+                    .background(Color(aigoHex: 0x1B1E22), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Theme.line, lineWidth: 1))
                     .textSelection(.enabled)
             }
         case "system":
@@ -94,6 +107,7 @@ struct MessageRow: View {
         default:
             Text(MessageRow.markdown(text))
                 .font(.body)
+                .lineSpacing(3)
                 .foregroundStyle(Theme.text)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)

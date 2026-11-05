@@ -10,7 +10,7 @@ enum ConnectionState: Equatable {
     case unpaired      // no paired host
     case connecting
     case online
-    case offline(String)
+    case offline(ConnectionProblem)
 }
 
 /// Single source of truth for the UI: the active host, its sessions and
@@ -24,9 +24,20 @@ final class AppStore: ObservableObject {
     @Published private(set) var agents: [AgentInfo] = []
     @Published private(set) var connection: ConnectionState = .unpaired
     @Published private(set) var hostDisplayName: String = ""
+    /// True once the first snapshot of the active host arrived.
+    @Published private(set) var hasSnapshot = false
+    /// "Since you left" digest, newest first, capped at `timelineCap`.
+    @Published private(set) var timeline: [TimelineEvent] = []
+    /// Recent session.updated arrival times per session (activity pulse).
+    @Published private(set) var activity: [String: [Date]] = [:]
+    /// When the app last went to the background (for "Since you left").
+    @Published private(set) var lastLeftAt: Date?
     @Published var path: [AppRoute] = []
     @Published var pairDraft: PairDraft?
     @Published var showPairSheet = false
+    @Published var showNewWork = false
+    /// Agent New work should preselect (e.g. "codex" from the empty state).
+    @Published var newWorkAgent: String?
 
     private(set) var client: APIClient?
     private var events: LiveSocket?
@@ -36,6 +47,11 @@ final class AppStore: ObservableObject {
     /// Questions answered through the on-screen menu: hidden until the host
     /// resolves the inbox row (it does so when the agent continues).
     private var locallyAnswered: Set<String> = []
+    /// Inbox items answered from this phone (so the digest does not repeat them).
+    private var answeredHere: Set<String> = []
+    private var intentObserver: NSObjectProtocol?
+
+    private static let timelineCap = 100
 
     init() {
         live = LiveActivityController()
@@ -45,6 +61,10 @@ final class AppStore: ObservableObject {
             activeHostID = saved
         } else {
             activeHostID = hosts.first?.id
+        }
+        let left = UserDefaults.standard.double(forKey: "lastLeftAt")
+        if left > 0 {
+            lastLeftAt = Date(timeIntervalSince1970: left)
         }
     }
 
@@ -58,6 +78,10 @@ final class AppStore: ObservableObject {
         inbox
             .filter { $0.isPendingApproval && !locallyAnswered.contains($0.id) }
             .sorted { ($0.createdAt ?? "") < ($1.createdAt ?? "") }
+    }
+
+    func pendingItems(for sessionID: String) -> [InboxItem] {
+        pendingItems.filter { $0.sessionId == sessionID }
     }
 
     var sortedSessions: [SessionInfo] {
@@ -75,12 +99,20 @@ final class AppStore: ObservableObject {
         max(pendingItems.count, sessions.filter { $0.status == .needsYou }.count)
     }
 
+    var connectionProblem: ConnectionProblem? {
+        if case .offline(let p) = connection { return p }
+        return nil
+    }
+
     var statusSentence: String {
         if activeHost == nil {
             return "Pair your PC to get started."
         }
-        if case .offline = connection, sessions.isEmpty {
+        if connectionProblem != nil, sessions.isEmpty {
             return "Can't reach \(hostLabel) right now."
+        }
+        if !hasSnapshot {
+            return "Connecting to \(hostLabel)…"
         }
         let needs = needsYouCount
         let working = workingCount
@@ -96,14 +128,15 @@ final class AppStore: ObservableObject {
             }
         }
         if parts.isEmpty {
-            return sessions.isEmpty ? "Nothing is running. Tap + to start." : "All quiet. Nothing needs you."
+            return sessions.isEmpty ? "Nothing is running yet." : "All quiet. Nothing needs you."
         }
         return parts.joined(separator: " ")
     }
 
     var hostLabel: String {
         if !hostDisplayName.isEmpty { return hostDisplayName }
-        return activeHost?.hostName ?? "your PC"
+        let n = activeHost?.hostName ?? ""
+        return n.isEmpty ? "your PC" : n
     }
 
     func session(id: String) -> SessionInfo? {
@@ -117,6 +150,14 @@ final class AppStore: ObservableObject {
         return AgentNames.display(id)
     }
 
+    /// Short lane name for the digest: the session's title or its folder.
+    func laneName(sessionID: String?, fallback: String) -> String {
+        if let sid = sessionID, let s = session(id: sid) {
+            return s.displayTitle
+        }
+        return fallback
+    }
+
     // MARK: - Lifecycle
 
     func start() {
@@ -126,6 +167,13 @@ final class AppStore: ObservableObject {
             self?.openSession(id)
         }
         NotificationManager.shared.requestAuthorization()
+        intentObserver = NotificationCenter.default.addObserver(
+            forName: IntentActions.decidedNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                await self?.reloadInbox()
+            }
+        }
         connect()
     }
 
@@ -133,10 +181,16 @@ final class AppStore: ObservableObject {
         switch phase {
         case .background:
             wentToBackground = true
+            let now = Date()
+            UserDefaults.standard.set(now.timeIntervalSince1970, forKey: "lastLeftAt")
         case .active:
             // iOS suspends sockets in the background: reconnect for a fresh snapshot.
             if started && wentToBackground {
                 wentToBackground = false
+                let left = UserDefaults.standard.double(forKey: "lastLeftAt")
+                if left > 0 {
+                    lastLeftAt = Date(timeIntervalSince1970: left)
+                }
                 if activeHost != nil {
                     events?.restart()
                 }
@@ -158,6 +212,7 @@ final class AppStore: ObservableObject {
         let c = APIClient(credentials: host)
         client = c
         hostDisplayName = host.hostName
+        connection = .connecting
         let socket = LiveSocket(client: c, path: "/api/v1/events")
         socket.onState = { [weak self] state in
             self?.socketStateChanged(state)
@@ -167,6 +222,18 @@ final class AppStore: ObservableObject {
         }
         events = socket
         socket.start()
+        Task { await self.loadAgents() }
+    }
+
+    /// Retry button: reconnect right away.
+    func retry() {
+        guard activeHost != nil else { return }
+        if events == nil {
+            connect()
+        } else {
+            connection = .connecting
+            events?.restart()
+        }
         Task { await self.loadAgents() }
     }
 
@@ -184,9 +251,13 @@ final class AppStore: ObservableObject {
                 connection = .connecting
             }
         case .open:
-            connection = .online
-        case .closed(let reason):
-            connection = .offline(reason)
+            withAnimation(.easeInOut(duration: 0.2)) {
+                connection = .online
+            }
+        case .closed(let problem):
+            withAnimation(.easeInOut(duration: 0.2)) {
+                connection = .offline(problem)
+            }
         }
     }
 
@@ -198,10 +269,12 @@ final class AppStore: ObservableObject {
         switch envelope.type {
         case "snapshot":
             guard let snap = try? decoder.decode(DataEnvelope<Snapshot>.self, from: data).data else { return }
-            sessions = snap.sessions ?? []
             withAnimation(.easeInOut(duration: 0.25)) {
+                sessions = snap.sessions ?? []
                 inbox = snap.inbox ?? []
                 pruneLocallyAnswered()
+                hasSnapshot = true
+                seedTimeline(snap)
             }
             if let name = snap.host?.hostName, !name.isEmpty {
                 hostDisplayName = name
@@ -209,20 +282,33 @@ final class AppStore: ObservableObject {
             }
         case "session.updated":
             guard let info = try? decoder.decode(DataEnvelope<SessionInfo>.self, from: data).data else { return }
-            upsertSession(info)
+            let previous = session(id: info.id)
+            noteActivity(info.id)
+            withAnimation(.easeInOut(duration: 0.25)) {
+                upsertSession(info)
+                sessionChanged(from: previous, to: info)
+            }
         case "session.removed":
             guard let gone = try? decoder.decode(DataEnvelope<IDOnly>.self, from: data).data else { return }
-            sessions.removeAll { $0.id == gone.id }
+            withAnimation(.easeInOut(duration: 0.25)) {
+                sessions.removeAll { $0.id == gone.id }
+            }
+            activity[gone.id] = nil
         case "inbox.updated":
             guard let item = try? decoder.decode(DataEnvelope<InboxItem>.self, from: data).data else { return }
-            withAnimation(.easeInOut(duration: 0.25)) {
+            let previous = inbox.first { $0.id == item.id }
+            withAnimation(.easeInOut(duration: 0.3)) {
                 upsertInbox(item)
+                inboxChanged(from: previous, to: item)
             }
         case "inbox.reset":
             Task { await self.reloadInbox() }
         case "notify":
             guard let notice = try? decoder.decode(DataEnvelope<HostNotice>.self, from: data).data else { return }
             NotificationManager.shared.post(notice, hostName: hostLabel)
+            withAnimation(.easeInOut(duration: 0.25)) {
+                addNotice(notice)
+            }
         default:
             return
         }
@@ -258,6 +344,172 @@ final class AppStore: ObservableObject {
         HostVault.save(hosts)
     }
 
+    // MARK: - Activity pulse
+
+    private func noteActivity(_ id: String) {
+        let now = Date()
+        var list = activity[id] ?? []
+        list.append(now)
+        list = list.filter { now.timeIntervalSince($0) < 120 }
+        if list.count > 40 {
+            list.removeFirst(list.count - 40)
+        }
+        activity[id] = list
+    }
+
+    // MARK: - Timeline ("Since you left")
+
+    private func insertEvent(_ event: TimelineEvent) {
+        guard !timeline.contains(where: { $0.id == event.id }) else { return }
+        let index = timeline.firstIndex { $0.date < event.date } ?? timeline.count
+        timeline.insert(event, at: index)
+        if timeline.count > AppStore.timelineCap {
+            timeline.removeLast(timeline.count - AppStore.timelineCap)
+        }
+    }
+
+    private func recentEvent(session: String?, kinds: [TimelineEvent.Kind], within seconds: TimeInterval,
+                             of date: Date, prefix: String) -> Int? {
+        guard let session = session, !session.isEmpty else { return nil }
+        return timeline.firstIndex { e in
+            e.sessionId == session && kinds.contains(e.kind) && e.id.hasPrefix(prefix) &&
+                abs(e.date.timeIntervalSince(date)) < seconds
+        }
+    }
+
+    private func statusEvent(for s: SessionInfo, date: Date) -> TimelineEvent? {
+        let prompt = (s.lastPrompt ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let who = s.isAgent ? agentName(s.agent) : "Terminal"
+        let kind: TimelineEvent.Kind
+        let text: String
+        switch s.status {
+        case .working:
+            kind = .working
+            text = prompt.isEmpty ? "\(who) started working" : "\(who) is working on: \(prompt)"
+        case .needsYou:
+            kind = .needsYou
+            text = "\(who) is waiting on you"
+        case .done:
+            kind = .done
+            text = prompt.isEmpty ? "\(who) finished a turn" : "Finished: \(prompt)"
+        case .exited:
+            kind = .exited
+            text = s.nowLine
+        case .stalled:
+            kind = .notice
+            text = "\(who) has been quiet for a while"
+        case .idle:
+            return nil
+        }
+        let stamp = s.statusChangedAt ?? String(Int(date.timeIntervalSince1970))
+        return TimelineEvent(id: "s:\(s.id):\(stamp):\(kind)", date: date, kind: kind, sessionId: s.id,
+                             lane: s.displayTitle, text: text, detail: nil)
+    }
+
+    private func seedTimeline(_ snap: Snapshot) {
+        let pendingSessions = Set((snap.inbox ?? []).filter { $0.isPendingApproval }.compactMap { $0.sessionId })
+        for s in snap.sessions ?? [] {
+            guard let date = AigoDate.parse(s.statusChangedAt) ?? AigoDate.parse(s.lastActivityAt) else { continue }
+            if s.status == .needsYou && pendingSessions.contains(s.id) { continue }
+            if let e = statusEvent(for: s, date: date) {
+                insertEvent(e)
+            }
+        }
+        for item in snap.inbox ?? [] {
+            if let e = inboxEvent(item) {
+                insertEvent(e)
+            }
+        }
+        for n in snap.notifications ?? [] {
+            addNotice(n, seeding: true)
+        }
+    }
+
+    private func sessionChanged(from old: SessionInfo?, to new: SessionInfo) {
+        let oldStatus = old?.status
+        let newStatus = new.status
+        guard oldStatus != newStatus else { return }
+        let date = Date()
+        if newStatus == .needsYou && !pendingItems(for: new.id).isEmpty { return }
+        if newStatus == .done,
+           recentEvent(session: new.id, kinds: [.done], within: 30, of: date, prefix: "n:") != nil {
+            return
+        }
+        if let e = statusEvent(for: new, date: date) {
+            insertEvent(e)
+        }
+        if newStatus == .done && UIApplication.shared.applicationState == .active {
+            Haptics.success()
+        }
+    }
+
+    private func inboxEvent(_ item: InboxItem) -> TimelineEvent? {
+        let lane = laneName(sessionID: item.sessionId, fallback: item.contextLine)
+        let title = (item.title ?? "").isEmpty ? "An agent asked for approval" : item.title!
+        if item.isPendingApproval {
+            let date = AigoDate.parse(item.createdAt) ?? Date()
+            return TimelineEvent(id: "i:\(item.id):pending", date: date, kind: .needsYou, sessionId: item.sessionId,
+                                 lane: lane, text: title, detail: item.message)
+        }
+        guard let decision = item.decision, !decision.isEmpty, !(item.actionId ?? "").isEmpty else { return nil }
+        let date = AigoDate.parse(item.updatedAt) ?? AigoDate.parse(item.createdAt) ?? Date()
+        let approved = decision == "approve" || decision == "allow"
+        let by = (item.decidedBy ?? "").isEmpty ? "" : " (\(item.decidedBy!))"
+        return TimelineEvent(id: "i:\(item.id):\(decision)", date: date, kind: approved ? .approved : .denied,
+                             sessionId: item.sessionId, lane: lane,
+                             text: (approved ? "Approved: " : "Denied: ") + title + by, detail: nil)
+    }
+
+    private func inboxChanged(from old: InboxItem?, to new: InboxItem) {
+        if new.isPendingApproval {
+            if let e = inboxEvent(new) {
+                // The specific request replaces a generic "waiting on you".
+                if let i = recentEvent(session: new.sessionId, kinds: [.needsYou], within: 60, of: e.date, prefix: "s:") {
+                    timeline.remove(at: i)
+                }
+                insertEvent(e)
+            }
+            return
+        }
+        guard old?.isPendingApproval == true, !answeredHere.contains(new.id) else { return }
+        if var e = inboxEvent(new) {
+            e.date = Date()
+            insertEvent(e)
+        }
+    }
+
+    private func addNotice(_ n: HostNotice, seeding: Bool = false) {
+        let category = n.category ?? ""
+        // Approvals are covered by inbox events.
+        if category == "approval_required" { return }
+        let date = AigoDate.parse(n.at) ?? Date()
+        let id = "n:" + ((n.id ?? "").isEmpty ? "\(category):\(date.timeIntervalSince1970)" : n.id!)
+        let body = (n.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if category == "task_complete",
+           let i = recentEvent(session: n.sessionId, kinds: [.done], within: 30, of: date, prefix: "s:") {
+            // Attach the agent's last message to the status change.
+            if !body.isEmpty {
+                timeline[i].detail = body
+            }
+            return
+        }
+        let kind: TimelineEvent.Kind
+        switch category {
+        case "task_complete": kind = .done
+        case "error": kind = .problem
+        default: kind = .notice
+        }
+        let lane = laneName(sessionID: n.sessionId, fallback: AgentNames.display(n.agent))
+        var text = (n.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.isEmpty {
+            text = kind == .done ? "Finished a turn" : "Update from \(lane)"
+        }
+        insertEvent(TimelineEvent(id: id, date: date, kind: kind, sessionId: n.sessionId, lane: lane,
+                                  text: text, detail: body.isEmpty ? nil : body))
+    }
+
+    // MARK: - Live Activity
+
     private func refreshLiveActivity() {
         guard activeHost != nil else {
             live.end()
@@ -267,9 +519,20 @@ final class AppStore: ObservableObject {
         let working = sortedSessions.filter { $0.status == .working || $0.status == .stalled }
         var headline = ""
         var detail = ""
+        var actionId = ""
         if let top = pending.first {
             headline = top.title ?? "An agent needs you"
-            detail = top.message ?? top.contextLine
+            let context = top.contextLine
+            if let message = top.message, !message.isEmpty {
+                detail = "\(context) · \(message)"
+            } else {
+                detail = context
+            }
+            let kind = top.kind ?? ""
+            if (kind.isEmpty || kind == "permission" || kind == "plan") && (top.options ?? []).isEmpty &&
+                !top.looksDestructive {
+                actionId = top.actionId ?? ""
+            }
         } else if let blocked = sessions.first(where: { $0.status == .needsYou }) {
             headline = blocked.displayTitle
             detail = "Waiting for your answer"
@@ -278,24 +541,28 @@ final class AppStore: ObservableObject {
             detail = w.nowLine
         }
         live.update(hostName: hostLabel, working: working.count, needsYou: needsYouCount,
-                    headline: headline, detail: detail)
+                    headline: headline, detail: detail, actionId: actionId)
     }
 
     // MARK: - Loading
 
     func refresh() async {
-        guard let c = client else { return }
+        guard let c = client else {
+            retry()
+            return
+        }
         do {
             let s = try await c.sessions()
             let i = try await c.inbox()
-            sessions = s
             withAnimation(.easeInOut(duration: 0.25)) {
+                sessions = s
                 inbox = i
                 pruneLocallyAnswered()
+                hasSnapshot = true
             }
             refreshLiveActivity()
         } catch {
-            connection = .offline(APIError.describe(error))
+            connection = .offline(c.problem(for: error))
         }
         if connection != .online {
             events?.restart()
@@ -325,6 +592,26 @@ final class AppStore: ObservableObject {
 
     func openSession(_ id: String) {
         path = [.session(id)]
+    }
+
+    func openNewWork(agent: String? = nil) {
+        newWorkAgent = agent
+        showNewWork = true
+    }
+
+    func openPairSheet() {
+        pairDraft = nil
+        showPairSheet = true
+    }
+
+    /// Pair again with the active PC (prefills its address and name).
+    func repairActiveHost() {
+        if let host = activeHost {
+            pairDraft = PairDraft(addr: host.addr, fingerprint: "", code: "", hostName: host.hostName)
+        } else {
+            pairDraft = nil
+        }
+        showPairSheet = true
     }
 
     func handleURL(_ url: URL) {
@@ -374,18 +661,20 @@ final class AppStore: ObservableObject {
         hosts.append(creds)
         HostVault.save(hosts)
         pairDraft = nil
+        showPairSheet = false
+        Haptics.success()
         activate(creds.id)
     }
 
     func activate(_ id: String) {
         guard hosts.contains(where: { $0.id == id }) else { return }
+        if id == activeHostID && client != nil {
+            if connectionProblem != nil { retry() }
+            return
+        }
         activeHostID = id
         UserDefaults.standard.set(id, forKey: "activeHostID")
-        sessions = []
-        inbox = []
-        locallyAnswered = []
-        path = []
-        live.end()
+        resetHostState()
         connect()
     }
 
@@ -395,12 +684,22 @@ final class AppStore: ObservableObject {
         if activeHostID == id {
             activeHostID = hosts.first?.id
             UserDefaults.standard.set(activeHostID, forKey: "activeHostID")
-            sessions = []
-            inbox = []
-            path = []
-            live.end()
+            resetHostState()
             connect()
         }
+    }
+
+    private func resetHostState() {
+        sessions = []
+        inbox = []
+        timeline = []
+        activity = [:]
+        locallyAnswered = []
+        answeredHere = []
+        hasSnapshot = false
+        hostDisplayName = ""
+        path = []
+        live.end()
     }
 
     // MARK: - Actions (each returns an error message, or nil on success)
@@ -410,16 +709,28 @@ final class AppStore: ObservableObject {
         guard let action = item.actionId, !action.isEmpty else { return "This item can't be answered from here." }
         do {
             try await c.decide(actionId: action, approve: approve, choice: choice)
-            withAnimation(.easeInOut(duration: 0.3)) {
+            answeredHere.insert(item.id)
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
                 if let i = inbox.firstIndex(where: { $0.id == item.id }) {
                     inbox[i].pending = false
                     inbox[i].decision = approve ? "approve" : "deny"
                 }
+                let title = (item.title ?? "").isEmpty ? "the request" : item.title!
+                let text: String
+                if let choice = choice, approve {
+                    text = "You answered \"\(choice)\": \(title)"
+                } else {
+                    text = (approve ? "You approved: " : "You denied: ") + title
+                }
+                insertEvent(TimelineEvent(id: "a:\(item.id)", date: Date(), kind: approve ? .approved : .denied,
+                                          sessionId: item.sessionId,
+                                          lane: laneName(sessionID: item.sessionId, fallback: item.contextLine),
+                                          text: text, detail: nil))
             }
             refreshLiveActivity()
             return nil
         } catch {
-            return APIError.describe(error)
+            return c.problem(for: error).message
         }
     }
 
@@ -432,8 +743,12 @@ final class AppStore: ObservableObject {
         if let err = await chooseMenu(sid, number: number, label: label) {
             return err
         }
-        withAnimation(.easeInOut(duration: 0.3)) {
+        answeredHere.insert(item.id)
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
             _ = locallyAnswered.insert(item.id)
+            insertEvent(TimelineEvent(id: "a:\(item.id)", date: Date(), kind: .answered, sessionId: sid,
+                                      lane: laneName(sessionID: sid, fallback: item.contextLine),
+                                      text: "You answered \"\(label)\"", detail: item.title))
         }
         refreshLiveActivity()
         return nil
@@ -445,6 +760,10 @@ final class AppStore: ObservableObject {
 
     func sendKeys(_ sessionID: String, _ keys: [String]) async -> String? {
         await perform { try await $0.keys(sessionID, keys: keys) }
+    }
+
+    func sendInput(_ sessionID: String, _ data: String) async -> String? {
+        await perform { try await $0.input(sessionID, data: data) }
     }
 
     func chooseMenu(_ sessionID: String, number: Int, label: String) async -> String? {
@@ -463,17 +782,21 @@ final class AppStore: ObservableObject {
         guard let c = client else { return "Not connected to your PC." }
         do {
             let info = try await c.restart(sessionID)
-            upsertSession(info)
+            withAnimation(.easeInOut(duration: 0.25)) {
+                upsertSession(info)
+            }
             return nil
         } catch {
-            return APIError.describe(error)
+            return c.problem(for: error).message
         }
     }
 
     func remove(_ sessionID: String) async -> String? {
         let err = await perform { try await $0.remove(sessionID) }
         if err == nil {
-            sessions.removeAll { $0.id == sessionID }
+            withAnimation(.easeInOut(duration: 0.25)) {
+                sessions.removeAll { $0.id == sessionID }
+            }
             refreshLiveActivity()
         }
         return err
@@ -484,7 +807,9 @@ final class AppStore: ObservableObject {
             throw APIError(status: 0, message: "Not connected to your PC.")
         }
         let info = try await c.createSession(body)
-        upsertSession(info)
+        withAnimation(.easeInOut(duration: 0.25)) {
+            upsertSession(info)
+        }
         refreshLiveActivity()
         return info
     }
@@ -495,7 +820,7 @@ final class AppStore: ObservableObject {
             try await op(c)
             return nil
         } catch {
-            return APIError.describe(error)
+            return c.problem(for: error).message
         }
     }
 }

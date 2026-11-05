@@ -1,4 +1,5 @@
 import ActivityKit
+import AppIntents
 import SwiftUI
 import WidgetKit
 
@@ -42,9 +43,14 @@ struct AigoLiveActivityWidget: Widget {
                                 .foregroundStyle(AigoPalette.secondary)
                                 .lineLimit(2)
                         }
-                        Text(context.attributes.hostName)
-                            .font(.caption2)
-                            .foregroundStyle(AigoPalette.secondary)
+                        if !context.state.actionId.isEmpty {
+                            AigoDecisionButtons(actionId: context.state.actionId, height: 40)
+                                .padding(.top, 6)
+                        } else {
+                            Text(context.attributes.hostName)
+                                .font(.caption2)
+                                .foregroundStyle(AigoPalette.secondary)
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 4)
@@ -124,6 +130,10 @@ struct AigoLockScreenView: View {
                         .foregroundStyle(AigoPalette.secondary)
                         .lineLimit(2)
                 }
+                if !state.actionId.isEmpty {
+                    AigoDecisionButtons(actionId: state.actionId, height: 44)
+                        .padding(.top, 4)
+                }
                 HStack(spacing: 4) {
                     Text(isStale ? "Last update" : "Updated")
                     Text(state.updatedAt, style: .time)
@@ -133,5 +143,33 @@ struct AigoLockScreenView: View {
             }
         }
         .padding(14)
+    }
+}
+
+/// Approve / Deny from the Lock Screen or the expanded Dynamic Island.
+/// Shown only for plain, non-destructive approvals (the app decides).
+struct AigoDecisionButtons: View {
+    let actionId: String
+    var height: CGFloat = 44
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button(intent: DecideApprovalIntent(actionId: actionId, approve: true)) {
+                Text("Approve")
+                    .font(.subheadline.weight(.bold))
+                    .frame(maxWidth: .infinity, minHeight: height)
+                    .background(AigoPalette.coral, in: Capsule())
+                    .foregroundStyle(AigoPalette.onCoral)
+            }
+            .buttonStyle(.plain)
+            Button(intent: DecideApprovalIntent(actionId: actionId, approve: false)) {
+                Text("Deny")
+                    .font(.subheadline.weight(.medium))
+                    .frame(maxWidth: .infinity, minHeight: height)
+                    .overlay(Capsule().strokeBorder(AigoPalette.coralLine, lineWidth: 1))
+                    .foregroundStyle(AigoPalette.text)
+            }
+            .buttonStyle(.plain)
+        }
     }
 }

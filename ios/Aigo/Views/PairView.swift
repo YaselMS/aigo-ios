@@ -1,8 +1,8 @@
 import SwiftUI
 import UIKit
 
-/// Pair with a PC: scan its QR code, paste/tap an aigo://pair link, or type
-/// the address, 6-digit code and certificate fingerprint by hand.
+/// Pair with a PC, step by step: open pairing on the PC, scan its QR code
+/// (primary), or paste an aigo://pair link / type the details by hand.
 struct PairView: View {
     var draft: PairDraft?
     var onDone: (() -> Void)?
@@ -13,113 +13,67 @@ struct PairView: View {
     @State private var fingerprint = ""
     @State private var hostName = ""
     @State private var showScanner = false
+    @State private var showManual = false
     @State private var busy = false
     @State private var error: String?
+    @FocusState private var field: Field?
+
+    private enum Field: Hashable {
+        case address, code, fingerprint
+    }
 
     var body: some View {
-        Form {
-            Section {
-                VStack(alignment: .leading, spacing: 8) {
-                    Wordmark()
-                    Text("On your PC, open Aigo → Settings → Remote access and choose Pair a device. Scan the QR code it shows, or type the details below.")
-                        .font(.callout)
-                        .foregroundStyle(Theme.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(.vertical, 4)
-            }
-            .listRowBackground(Color.clear)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                intro
 
-            Section {
-                Button {
-                    showScanner = true
-                } label: {
-                    Label("Scan QR code", systemImage: "qrcode.viewfinder")
-                        .frame(minHeight: 44)
-                }
-                Button {
-                    pasteLink()
-                } label: {
-                    Label("Paste pairing link", systemImage: "doc.on.clipboard")
-                        .frame(minHeight: 44)
-                }
-            }
-            .listRowBackground(Theme.surface)
+                step(1, title: "On your PC", text: "Open Aigo → Settings → Remote access and choose Pair a device. A QR code and a 6-digit code appear.")
 
-            Section {
-                TextField("10.0.0.10:47211", text: $address)
-                    .keyboardType(.URL)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled(true)
-                    .font(Theme.mono)
-                    .frame(minHeight: 44)
-            } header: {
-                Text("PC address")
-            } footer: {
-                Text("Your PC's LAN or Tailscale address. The port defaults to 47211.")
-            }
-            .listRowBackground(Theme.surface)
-
-            Section("6-digit code") {
-                TextField("123456", text: $code)
-                    .keyboardType(.numberPad)
-                    .font(.system(.title3, design: .monospaced))
-                    .frame(minHeight: 44)
-            }
-            .listRowBackground(Theme.surface)
-
-            Section {
-                TextField("64 hex characters", text: $fingerprint, axis: .vertical)
-                    .lineLimit(2...4)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled(true)
-                    .font(Theme.monoSmall)
-            } header: {
-                Text("Certificate fingerprint")
-            } footer: {
-                Text("Aigo trusts only the PC whose certificate matches this fingerprint.")
-            }
-            .listRowBackground(Theme.surface)
-
-            if let error = error {
-                Section {
-                    Text(error)
-                        .foregroundStyle(Theme.coral)
-                }
-                .listRowBackground(Theme.surface)
-            }
-
-            Section {
-                Button {
-                    pair()
-                } label: {
-                    HStack {
-                        Spacer()
-                        if busy {
-                            ProgressView().tint(Theme.bg)
-                        } else {
-                            Text(hostName.isEmpty ? "Pair" : "Pair with \(hostName)")
-                        }
-                        Spacer()
+                step(2, title: "Scan the QR code", text: "Point the camera at the code on the PC screen. Pairing starts by itself.") {
+                    Button {
+                        Haptics.tap()
+                        showScanner = true
+                    } label: {
+                        Label("Scan QR code", systemImage: "qrcode.viewfinder")
                     }
+                    .buttonStyle(FilledButtonStyle())
+                    .disabled(busy)
                 }
-                .buttonStyle(FilledButtonStyle())
-                .disabled(busy)
+
+                if let error = error {
+                    InlineBanner(text: error) { withAnimation { self.error = nil } }
+                        .transition(.opacity)
+                }
+
+                other
+
+                trustNote
             }
-            .listRowBackground(Color.clear)
-            .listRowInsets(EdgeInsets())
+            .padding(.horizontal, Theme.gutter)
+            .padding(.vertical, 16)
+            .animation(.easeInOut(duration: 0.25), value: showManual)
+            .animation(.easeInOut(duration: 0.2), value: error)
         }
-        .scrollContentBackground(.hidden)
+        .scrollDismissesKeyboard(.interactively)
         .background(Theme.bg.ignoresSafeArea())
+        .overlay {
+            if busy {
+                busyOverlay
+            }
+        }
         .sheet(isPresented: $showScanner) {
             QRScannerSheet { value in
                 showScanner = false
                 if let d = PairDraft(string: value) {
+                    Haptics.success()
                     apply(d)
                     if d.isComplete {
                         pair()
+                    } else {
+                        showManual = true
                     }
                 } else {
+                    Haptics.error()
                     error = "That QR code is not an Aigo pairing code."
                 }
             }
@@ -127,6 +81,9 @@ struct PairView: View {
         .onAppear {
             if let d = draft {
                 apply(d)
+                if !d.isComplete {
+                    showManual = true
+                }
             }
         }
         .onChange(of: draft) { _, newValue in
@@ -135,6 +92,181 @@ struct PairView: View {
             }
         }
     }
+
+    // MARK: - Pieces
+
+    private var intro: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Wordmark(size: 28)
+            Text(introTitle)
+                .font(Theme.display)
+                .foregroundStyle(Theme.text)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Aigo shows what every agent on your PC is doing and lets you answer them from here.")
+                .font(.callout)
+                .foregroundStyle(Theme.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.bottom, 4)
+    }
+
+    private var introTitle: String {
+        if let d = draft, !d.hostName.isEmpty, !d.isComplete {
+            return "Pair again with \(d.hostName)"
+        }
+        return "Connect this iPhone to your PC"
+    }
+
+    private func step(_ n: Int, title: String, text: String) -> some View {
+        step(n, title: title, text: text) { EmptyView() }
+    }
+
+    private func step<Extra: View>(_ n: Int, title: String, text: String, @ViewBuilder extra: () -> Extra) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            Text("\(n)")
+                .font(.system(.callout, design: .monospaced).weight(.bold))
+                .foregroundStyle(Theme.onAccent)
+                .frame(width: 30, height: 30)
+                .background(Theme.lime, in: Circle())
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.headline)
+                        .foregroundStyle(Theme.text)
+                    Text(text)
+                        .font(.callout)
+                        .foregroundStyle(Theme.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                extra()
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .aigoCard()
+        .accessibilityElement(children: .contain)
+    }
+
+    private var other: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(title: "Other ways")
+            Button {
+                pasteLink()
+            } label: {
+                Label("Paste pairing link", systemImage: "doc.on.clipboard")
+            }
+            .buttonStyle(OutlineButtonStyle())
+            .disabled(busy)
+
+            Button {
+                Haptics.selection()
+                showManual.toggle()
+            } label: {
+                HStack {
+                    Label("Enter the details by hand", systemImage: "keyboard")
+                    Spacer()
+                    Image(systemName: "chevron.down")
+                        .rotationEffect(.degrees(showManual ? 180 : 0))
+                }
+            }
+            .buttonStyle(OutlineButtonStyle())
+
+            if showManual {
+                manual
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+
+    private var manual: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            fieldBlock("PC address", hint: "LAN or Tailscale address. The port defaults to 47211.") {
+                TextField("10.0.0.10:47211", text: $address)
+                    .keyboardType(.URL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+                    .font(Theme.mono)
+                    .focused($field, equals: .address)
+                    .submitLabel(.next)
+                    .onSubmit { field = .code }
+            }
+            fieldBlock("6-digit code", hint: nil) {
+                TextField("123456", text: $code)
+                    .keyboardType(.numberPad)
+                    .font(.system(.title3, design: .monospaced))
+                    .focused($field, equals: .code)
+            }
+            fieldBlock("Certificate fingerprint", hint: "Aigo trusts only the PC whose certificate matches this fingerprint.") {
+                TextField("64 hex characters", text: $fingerprint, axis: .vertical)
+                    .lineLimit(2...4)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+                    .font(Theme.monoSmall)
+                    .focused($field, equals: .fingerprint)
+            }
+            Button {
+                pair()
+            } label: {
+                Text(hostName.isEmpty ? "Pair" : "Pair with \(hostName)")
+            }
+            .buttonStyle(FilledButtonStyle())
+            .disabled(busy)
+        }
+        .padding(16)
+        .aigoCard()
+    }
+
+    private func fieldBlock<F: View>(_ title: String, hint: String?, @ViewBuilder field: () -> F) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title.uppercased())
+                .font(Theme.monoLabel)
+                .tracking(0.8)
+                .foregroundStyle(Theme.secondary)
+            field()
+                .foregroundStyle(Theme.text)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .frame(minHeight: 46)
+                .background(Theme.surface2, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.line, lineWidth: 1))
+            if let hint = hint {
+                Text(hint)
+                    .font(.footnote)
+                    .foregroundStyle(Theme.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var trustNote: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "lock.shield")
+                .foregroundStyle(Theme.ice)
+            Text("The connection is encrypted and pinned to your PC's certificate. Nothing goes through a cloud service.")
+                .font(.footnote)
+                .foregroundStyle(Theme.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.top, 4)
+    }
+
+    private var busyOverlay: some View {
+        ZStack {
+            Theme.bg.opacity(0.75).ignoresSafeArea()
+            VStack(spacing: 14) {
+                ProgressView().controlSize(.large).tint(Theme.lime)
+                Text(hostName.isEmpty ? "Pairing…" : "Pairing with \(hostName)…")
+                    .font(.headline)
+                    .foregroundStyle(Theme.text)
+            }
+            .padding(28)
+            .aigoCard()
+        }
+        .transition(.opacity)
+    }
+
+    // MARK: - Behaviour
 
     private func apply(_ d: PairDraft) {
         if !d.addr.isEmpty { address = d.addr }
@@ -146,25 +278,34 @@ struct PairView: View {
 
     private func pasteLink() {
         guard let text = UIPasteboard.general.string, let d = PairDraft(string: text) else {
-            error = "The clipboard has no aigo://pair link."
+            Haptics.error()
+            error = "The clipboard has no aigo://pair link. Copy it on the PC first."
             return
         }
         apply(d)
+        if d.isComplete {
+            pair()
+        } else {
+            showManual = true
+        }
     }
 
     private func pair() {
         guard !busy else { return }
-        busy = true
+        field = nil
+        withAnimation { busy = true }
         error = nil
         let d = PairDraft(addr: address, fingerprint: fingerprint, code: code, hostName: hostName)
         Task {
             do {
                 try await store.pair(d)
-                busy = false
+                withAnimation { busy = false }
                 onDone?()
             } catch {
-                busy = false
+                withAnimation { busy = false }
+                Haptics.error()
                 self.error = APIError.describe(error)
+                showManual = true
             }
         }
     }

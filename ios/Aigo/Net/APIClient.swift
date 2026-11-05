@@ -3,10 +3,15 @@ import Foundation
 struct APIError: LocalizedError {
     let status: Int
     let message: String
+    /// The pairing is no longer valid (device removed, certificate changed).
+    var needsRepair: Bool = false
 
     var errorDescription: String? { message }
 
     static func from(status: Int, data: Data) -> APIError {
+        if status == 401 {
+            return APIError(status: status, message: ConnectionProblem.removed.message, needsRepair: true)
+        }
         if let body = try? JSONDecoder().decode(ErrorBody.self, from: data), let e = body.error, !e.isEmpty {
             return APIError(status: status, message: e)
         }
@@ -14,7 +19,7 @@ struct APIError: LocalizedError {
         return APIError(status: status, message: text.isEmpty ? "The PC answered with HTTP \(status)." : text)
     }
 
-    /// Plain-language description of any networking error.
+    /// Plain-language description of any error (without host context).
     static func describe(_ error: Error) -> String {
         if let e = error as? APIError {
             return e.message
@@ -22,7 +27,7 @@ struct APIError: LocalizedError {
         if let u = error as? URLError {
             switch u.code {
             case .cancelled:
-                return "The connection was refused or cancelled."
+                return "The connection was cancelled."
             case .secureConnectionFailed, .serverCertificateUntrusted, .serverCertificateHasBadDate,
                  .serverCertificateNotYetValid, .serverCertificateHasUnknownRoot, .clientCertificateRejected:
                 return "Secure connection failed. Check the address and fingerprint."
@@ -40,17 +45,61 @@ struct APIError: LocalizedError {
     }
 }
 
+/// Why the phone can't talk to its PC, in plain words.
+struct ConnectionProblem: Equatable {
+    var message: String
+    /// Retrying will not help: the user has to pair again.
+    var needsRepair: Bool = false
+
+    static let removed = ConnectionProblem(
+        message: "This iPhone was removed from the PC — pair again.", needsRepair: true)
+    static let certificateChanged = ConnectionProblem(
+        message: "This PC's certificate changed — pair again.", needsRepair: true)
+}
+
+enum HostAddress {
+    /// Host part of "host:port" / "[v6]:port".
+    static func host(_ addr: String) -> String {
+        if addr.hasPrefix("["), let close = addr.firstIndex(of: "]") {
+            return String(addr[addr.index(after: addr.startIndex)..<close])
+        }
+        if addr.filter({ $0 == ":" }).count == 1, let colon = addr.lastIndex(of: ":") {
+            return String(addr[..<colon])
+        }
+        return addr
+    }
+
+    /// Private (RFC 1918), link-local or mDNS address: reached over Wi-Fi,
+    /// which needs the Local Network permission on iOS.
+    static func isLAN(_ addr: String) -> Bool {
+        let h = host(addr).lowercased()
+        if h.hasSuffix(".local") || h.hasSuffix(".lan") || h.hasSuffix(".home.arpa") { return true }
+        if h.hasPrefix("fe80:") || h.hasPrefix("fd") { return true }
+        let parts = h.split(separator: ".").compactMap { Int($0) }
+        guard parts.count == 4 else { return false }
+        switch parts[0] {
+        case 10: return true
+        case 192: return parts[1] == 168
+        case 172: return (16...31).contains(parts[1])
+        case 169: return parts[1] == 254
+        default: return false
+        }
+    }
+}
+
 /// REST + WebSocket access to one paired host over pinned TLS.
 /// All stored properties are immutable, so it is safe to share.
 final class APIClient: @unchecked Sendable {
     let addr: String
     let fingerprint: String
     let token: String
+    let hostName: String
     let session: URLSession
     private let delegate: PinnedSessionDelegate
 
-    init(addr: String, fingerprint: String, token: String) {
+    init(addr: String, fingerprint: String, token: String, hostName: String = "") {
         self.addr = addr
+        self.hostName = hostName
         self.fingerprint = CertificatePin.normalize(fingerprint)
         self.token = token
         let delegate = PinnedSessionDelegate(fingerprint: fingerprint)
@@ -64,7 +113,8 @@ final class APIClient: @unchecked Sendable {
     }
 
     convenience init(credentials: HostCredentials) {
-        self.init(addr: credentials.addr, fingerprint: credentials.fingerprint, token: credentials.token)
+        self.init(addr: credentials.addr, fingerprint: credentials.fingerprint, token: credentials.token,
+                  hostName: credentials.hostName)
     }
 
     func invalidate() {
@@ -130,10 +180,49 @@ final class APIClient: @unchecked Sendable {
     }
 
     private func wrap(_ error: Error) -> Error {
-        if let u = error as? URLError, u.code == .cancelled, let presented = delegate.lastMismatch {
-            return APIError(status: 0, message: "This PC's certificate does not match the paired fingerprint (it presented \(presented.prefix(16))…). Pair again.")
+        let p = problem(for: error)
+        return APIError(status: 0, message: p.message, needsRepair: p.needsRepair)
+    }
+
+    var hostLabel: String {
+        let n = hostName.trimmingCharacters(in: .whitespaces)
+        return (n.isEmpty || n == "PC") ? addr : n
+    }
+
+    /// Maps a networking failure to a plain cause the user can act on.
+    func problem(for error: Error, response: URLResponse? = nil) -> ConnectionProblem {
+        if let http = response as? HTTPURLResponse, http.statusCode == 401 {
+            return .removed
         }
-        return APIError(status: 0, message: APIError.describe(error))
+        if let e = error as? APIError {
+            return ConnectionProblem(message: e.message, needsRepair: e.needsRepair)
+        }
+        guard let u = error as? URLError else {
+            return ConnectionProblem(message: error.localizedDescription)
+        }
+        if delegate.lastMismatch != nil {
+            switch u.code {
+            case .cancelled, .secureConnectionFailed, .serverCertificateUntrusted, .serverCertificateHasUnknownRoot:
+                return .certificateChanged
+            default:
+                break
+            }
+        }
+        switch u.code {
+        case .notConnectedToInternet, .networkConnectionLost, .cannotConnectToHost, .timedOut,
+             .cannotFindHost, .dnsLookupFailed:
+            if HostAddress.isLAN(addr) {
+                return ConnectionProblem(message: "Can't reach \(hostLabel). Check: same Wi-Fi as the PC; iPhone Settings → Aigo → Local Network is on; Windows firewall allows Aigo on this network (Private).")
+            }
+            return ConnectionProblem(message: "Can't reach \(hostLabel) at \(addr). Check: the PC is on and Aigo is running; Tailscale (or your VPN) is connected on both devices; Windows firewall allows Aigo.")
+        case .cancelled:
+            return ConnectionProblem(message: "The connection to \(hostLabel) was cancelled.")
+        case .secureConnectionFailed, .serverCertificateUntrusted, .serverCertificateHasBadDate,
+             .serverCertificateNotYetValid, .serverCertificateHasUnknownRoot, .clientCertificateRejected:
+            return ConnectionProblem(message: "Secure connection to \(hostLabel) failed. Check the address, or pair again.")
+        default:
+            return ConnectionProblem(message: APIError.describe(error))
+        }
     }
 
     // MARK: - WebSocket

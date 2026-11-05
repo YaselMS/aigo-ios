@@ -11,12 +11,15 @@ struct AigoActivityAttributes: ActivityAttributes {
         var headline: String
         /// Pending item message, or what the session is working on.
         var detail: String
+        /// Set when the top pending item is a plain approve/deny that is safe to
+        /// answer from the island (not destructive, not a multiple-choice question).
+        var actionId: String
         var updatedAt: Date
 
         /// Equal ignoring the timestamp (used to skip redundant updates).
         func sameContent(as other: ContentState) -> Bool {
             working == other.working && needsYou == other.needsYou &&
-                headline == other.headline && detail == other.detail
+                headline == other.headline && detail == other.detail && actionId == other.actionId
         }
     }
 

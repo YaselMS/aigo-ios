@@ -56,7 +56,30 @@ struct SettingsView: View {
             .listRowBackground(Theme.surface)
 
             Section("Connection") {
-                LabeledContent("Status", value: connectionText)
+                LabeledContent("Status") {
+                    HStack(spacing: 6) {
+                        Circle().fill(store.connection.dotColor).frame(width: 7, height: 7)
+                        Text(connectionText)
+                            .multilineTextAlignment(.trailing)
+                    }
+                }
+                if store.connectionProblem != nil {
+                    Button {
+                        Haptics.tap()
+                        store.retry()
+                    } label: {
+                        Label("Retry now", systemImage: "arrow.clockwise")
+                            .frame(minHeight: 44)
+                    }
+                    if store.connectionProblem?.needsRepair == true {
+                        Button {
+                            store.repairActiveHost()
+                        } label: {
+                            Label("Pair again", systemImage: "qrcode.viewfinder")
+                                .frame(minHeight: 44)
+                        }
+                    }
+                }
                 if let host = store.activeHost {
                     LabeledContent("Address") {
                         Text(host.addr).font(Theme.monoSmall)
@@ -126,13 +149,13 @@ struct SettingsView: View {
         case .unpaired: return "Not paired"
         case .connecting: return "Connecting…"
         case .online: return "Connected"
-        case .offline(let reason): return "Offline: \(reason)"
+        case .offline(let problem): return problem.message
         }
     }
 
     static var versionString: String {
         let info = Bundle.main.infoDictionary
-        let version = info?["CFBundleShortVersionString"] as? String ?? "0.1.0"
+        let version = info?["CFBundleShortVersionString"] as? String ?? "0.2.0"
         let build = info?["CFBundleVersion"] as? String ?? "1"
         return "\(version) (\(build))"
     }

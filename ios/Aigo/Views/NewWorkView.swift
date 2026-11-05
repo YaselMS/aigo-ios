@@ -4,7 +4,10 @@ struct NewWorkView: View {
     @EnvironmentObject private var store: AppStore
     @Environment(\.dismiss) private var dismiss
 
-    private static let terminalChoice = "__terminal__"
+    /// Agent to preselect ("codex", "claude", … or `terminalChoice`).
+    var preferredAgent: String? = nil
+
+    static let terminalChoice = "__terminal__"
 
     @State private var choice = ""
     @State private var folder = ""
@@ -20,6 +23,15 @@ struct NewWorkView: View {
         NavigationStack {
             Form {
                 Section("Who") {
+                    if store.agents.isEmpty {
+                        HStack(spacing: 10) {
+                            ProgressView().controlSize(.small)
+                            Text("Looking for agents on \(store.hostLabel)…")
+                                .font(.footnote)
+                                .foregroundStyle(Theme.secondary)
+                        }
+                        .frame(minHeight: 44)
+                    }
                     ForEach(store.agents) { agent in
                         choiceRow(id: agent.id,
                                   title: agent.displayName,
@@ -105,7 +117,8 @@ struct NewWorkView: View {
                         ProgressView()
                     } else {
                         Button("Start") { start() }
-                            .disabled(choice.isEmpty)
+                            .fontWeight(.bold)
+                            .disabled(choice.isEmpty || store.client == nil)
                     }
                 }
             }
@@ -117,9 +130,14 @@ struct NewWorkView: View {
 
     private func choiceRow(id: String, title: String, detail: String?, enabled: Bool) -> some View {
         Button {
+            Haptics.selection()
             choice = id
         } label: {
-            HStack {
+            HStack(spacing: 12) {
+                Circle()
+                    .fill(choice == id ? Theme.lime : Color.clear)
+                    .overlay(Circle().strokeBorder(choice == id ? Theme.lime : Theme.idle, lineWidth: 1.5))
+                    .frame(width: 10, height: 10)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
                         .foregroundStyle(enabled ? Theme.text : Theme.secondary)
@@ -144,6 +162,11 @@ struct NewWorkView: View {
     private func load() async {
         if store.agents.isEmpty {
             await store.loadAgents()
+        }
+        if choice.isEmpty, let wanted = preferredAgent {
+            if wanted == NewWorkView.terminalChoice || store.agents.contains(where: { $0.id == wanted && $0.installed }) {
+                choice = wanted
+            }
         }
         if choice.isEmpty {
             let preferred = ["codex", "claude", "opencode", "pi"]
@@ -189,10 +212,12 @@ struct NewWorkView: View {
             do {
                 let info = try await store.createSession(request)
                 busy = false
+                Haptics.success()
                 dismiss()
                 store.path.append(.session(info.id))
             } catch {
                 busy = false
+                Haptics.error()
                 self.error = APIError.describe(error)
             }
         }

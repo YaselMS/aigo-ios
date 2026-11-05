@@ -22,8 +22,8 @@ final class TranscriptModel: ObservableObject {
             self?.handle(data)
         }
         s.onState = { [weak self] state in
-            if case .closed(let reason) = state {
-                self?.error = reason
+            if case .closed(let problem) = state {
+                self?.error = problem.message
             } else if state == .open {
                 self?.error = nil
             }

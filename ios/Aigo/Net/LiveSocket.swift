@@ -1,17 +1,21 @@
 import Foundation
 
 /// One authenticated WebSocket with automatic reconnect (exponential backoff).
-/// Used for /api/v1/events and /api/v1/sessions/{id}/transcript. The server
-/// re-sends its full state (snapshot / backlog) on every new connection.
+/// Used for /api/v1/events, /sessions/{id}/transcript and /sessions/{id}/attach.
+/// The server re-sends its full state (snapshot / backlog / replay) on every
+/// new connection.
 @MainActor
 final class LiveSocket {
     enum State: Equatable {
         case connecting
         case open
-        case closed(String)
+        case closed(ConnectionProblem)
     }
 
+    /// Text frames (and binary frames when `onBinary` is nil).
     var onMessage: ((Data) -> Void)?
+    /// Binary frames (terminal output on /attach).
+    var onBinary: ((Data) -> Void)?
     var onState: ((State) -> Void)?
 
     private let client: APIClient
@@ -20,6 +24,7 @@ final class LiveSocket {
     private var runner: Task<Void, Never>?
     private var pinger: Task<Void, Never>?
     private var generation = 0
+    private(set) var isOpen = false
 
     init(client: APIClient, path: String) {
         self.client = client
@@ -43,6 +48,7 @@ final class LiveSocket {
         pinger = nil
         task?.cancel(with: .goingAway, reason: nil)
         task = nil
+        isOpen = false
     }
 
     /// Drops the current connection and connects again right away.
@@ -60,6 +66,14 @@ final class LiveSocket {
         task.send(.string(text)) { _ in }
     }
 
+    /// Sends a binary frame. Returns false when the socket is not open.
+    @discardableResult
+    func sendData(_ data: Data) -> Bool {
+        guard isOpen, let task = task else { return false }
+        task.send(.data(data)) { _ in }
+        return true
+    }
+
     private func run(_ gen: Int) async {
         var attempt = 0
         while !Task.isCancelled && gen == generation {
@@ -68,12 +82,13 @@ final class LiveSocket {
             do {
                 ws = try client.webSocketTask(path)
             } catch {
-                onState?(.closed(APIError.describe(error)))
+                onState?(.closed(client.problem(for: error)))
+                runner = nil
                 return
             }
             task = ws
             ws.resume()
-            var reason = "Disconnected"
+            var problem = ConnectionProblem(message: "Disconnected from \(client.hostLabel).")
             var opened = false
             do {
                 while !Task.isCancelled {
@@ -81,6 +96,7 @@ final class LiveSocket {
                     guard gen == generation else { break }
                     if !opened {
                         opened = true
+                        isOpen = true
                         attempt = 0
                         onState?(.open)
                         startPinger(ws)
@@ -89,20 +105,30 @@ final class LiveSocket {
                     case .string(let text):
                         onMessage?(Data(text.utf8))
                     case .data(let data):
-                        onMessage?(data)
+                        if let binary = onBinary {
+                            binary(data)
+                        } else {
+                            onMessage?(data)
+                        }
                     @unknown default:
                         break
                     }
                 }
             } catch {
-                reason = APIError.describe(error)
+                problem = client.problem(for: error, response: ws.response)
             }
             ws.cancel(with: .goingAway, reason: nil)
             guard gen == generation, !Task.isCancelled else { return }
+            isOpen = false
             pinger?.cancel()
             pinger = nil
             task = nil
-            onState?(.closed(reason))
+            onState?(.closed(problem))
+            if problem.needsRepair {
+                // Retrying cannot help until the user pairs again (or taps Retry).
+                runner = nil
+                return
+            }
             attempt += 1
             let delay = min(20.0, 0.75 * pow(2.0, Double(min(attempt, 5))))
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))

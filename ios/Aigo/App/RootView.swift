@@ -8,8 +8,10 @@ struct RootView: View {
         Group {
             if store.hosts.isEmpty {
                 NavigationStack {
-                    PairView(draft: nil, onDone: nil)
+                    PairView(draft: store.pairDraft, onDone: nil)
                         .navigationTitle("Pair your PC")
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbarBackground(Theme.bg, for: .navigationBar)
                 }
             } else {
                 NavigationStack(path: $store.path) {
@@ -26,12 +28,14 @@ struct RootView: View {
             }
         }
         .background(Theme.bg.ignoresSafeArea())
-        .sheet(isPresented: $store.showPairSheet) {
+        .sheet(isPresented: Binding(get: { store.showPairSheet && !store.hosts.isEmpty },
+                                    set: { store.showPairSheet = $0 })) {
             NavigationStack {
                 PairView(draft: store.pairDraft, onDone: {
                     store.showPairSheet = false
                 })
                 .navigationTitle("Pair a PC")
+                .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Cancel") { store.showPairSheet = false }
@@ -40,6 +44,14 @@ struct RootView: View {
             }
             .environmentObject(store)
             .preferredColorScheme(.dark)
+            .tint(Theme.lime)
+        }
+        .sheet(isPresented: $store.showNewWork) {
+            NewWorkView(preferredAgent: store.newWorkAgent)
+                .environmentObject(store)
+                .preferredColorScheme(.dark)
+                .tint(Theme.lime)
+                .presentationDragIndicator(.visible)
         }
         .onChange(of: scenePhase) { _, phase in
             store.scenePhaseChanged(phase)
