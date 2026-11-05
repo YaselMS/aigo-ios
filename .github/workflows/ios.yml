@@ -1,0 +1,281 @@
+name: Build unsigned IPA
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      xcode:
+        description: "Xcode version to use, e.g. 16.4 or 26.1 (empty = newest installed 16.x/26.x)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Validate ios/project.yml
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f ios/project.yml || { echo "::error file=ios/project.yml::ios/project.yml is missing"; exit 1; }
+          python -m pip install --quiet pyyaml
+          python - <<'PY'
+          import sys, yaml
+          with open("ios/project.yml", encoding="utf-8") as f:
+              spec = yaml.safe_load(f)
+          errors = []
+          if not isinstance(spec, dict):
+              errors.append("top level is not a mapping")
+          else:
+              if spec.get("name") != "Aigo":
+                  errors.append(f"project name is {spec.get('name')!r}, expected 'Aigo'")
+              targets = spec.get("targets") or {}
+              for t in ("Aigo", "AigoWidgets"):
+                  if t not in targets:
+                      errors.append(f"target {t!r} not defined")
+          for e in errors:
+              print(f"::error file=ios/project.yml::{e}")
+          if errors:
+              sys.exit(1)
+          print("ios/project.yml OK: project 'Aigo' with targets", ", ".join(sorted(spec["targets"])))
+          PY
+
+      - name: Check for committed signing material
+        shell: bash
+        run: |
+          set -euo pipefail
+          bad="$(git ls-files -- '*.p12' '*.pfx' '*.p8' '*.mobileprovision' '*.provisionprofile' '*.certSigningRequest' || true)"
+          if [ -n "$bad" ]; then
+            echo "$bad" | while read -r f; do echo "::error file=$f::signing material must not be committed"; done
+            exit 1
+          fi
+          keys="$(git grep -lE -e '-----BEGIN ([A-Z]+ )?PRIVATE KEY-----' || true)"
+          if [ -n "$keys" ]; then
+            echo "$keys" | while read -r f; do echo "::error file=$f::private key must not be committed"; done
+            exit 1
+          fi
+          echo "No certificates, provisioning profiles or private keys committed."
+
+      - name: Check shell scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in scripts/*.sh; do bash -n "$f"; done
+          if command -v shellcheck >/dev/null; then shellcheck scripts/*.sh; fi
+
+  build:
+    name: Build unsigned IPA
+    needs: lint
+    runs-on: macos-15
+    timeout-minutes: 40
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set paths
+        shell: bash
+        run: |
+          {
+            echo "ARCHIVE_PATH=$RUNNER_TEMP/Aigo.xcarchive"
+            echo "RESULT_BUNDLE=$RUNNER_TEMP/Aigo.xcresult"
+            echo "BUILD_LOG=$RUNNER_TEMP/xcodebuild.log"
+            echo "OUT_DIR=$RUNNER_TEMP/out"
+          } >> "$GITHUB_ENV"
+
+      - name: Select Xcode
+        shell: bash
+        env:
+          XCODE_OVERRIDE: ${{ inputs.xcode }}
+        run: |
+          set -euo pipefail
+          echo "Installed Xcode versions:"
+          stable=""
+          for path in /Applications/Xcode*.app; do
+            [ -e "$path" ] || continue
+            name="$(basename "$path")"
+            echo "  $name"
+            # Only stable Xcode_16.x / Xcode_26.x (betas and RCs are skipped).
+            if [[ "$name" =~ ^Xcode_((16|26)(\.[0-9]+)*)\.app$ ]]; then
+              stable="$stable${BASH_REMATCH[1]}"$'\n'
+            fi
+          done
+          version=""
+          if [ -n "${XCODE_OVERRIDE:-}" ]; then
+            if ! [[ "$XCODE_OVERRIDE" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+              echo "::error::invalid Xcode version input: $XCODE_OVERRIDE"; exit 1
+            fi
+            version="$XCODE_OVERRIDE"
+          elif [ -n "$stable" ]; then
+            version="$(printf '%s' "$stable" | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1)"
+          fi
+          app="/Applications/Xcode_${version}.app"
+          if [ -n "$version" ] && [ -d "$app" ]; then
+            sudo xcode-select -s "$app/Contents/Developer"
+            echo "Selected $app"
+          elif [ -n "${XCODE_OVERRIDE:-}" ]; then
+            echo "::error::Xcode $XCODE_OVERRIDE is not installed on this runner image"; exit 1
+          else
+            echo "::warning::No Xcode 16.x/26.x found; keeping the image default"
+          fi
+          xcodebuild -version
+          xcodebuild -showsdks | grep -i iphoneos || true
+
+      - name: Install XcodeGen and xcbeautify
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install xcodegen xcbeautify
+          xcodegen --version
+
+      - name: Generate Xcode project
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodegen generate --spec ios/project.yml
+          test -d ios/Aigo.xcodeproj
+
+      - name: Archive (no code signing)
+        shell: bash
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          # Build number increases with every run so re-signed updates install over older ones.
+          overrides=("CURRENT_PROJECT_VERSION=$RUN_NUMBER")
+          if [ "$REF_TYPE" = "tag" ] && [[ "$REF_NAME" =~ ^v([0-9]+\.[0-9]+(\.[0-9]+)?)$ ]]; then
+            overrides+=("MARKETING_VERSION=${BASH_REMATCH[1]}")
+          fi
+          if command -v xcbeautify >/dev/null; then
+            formatter=(xcbeautify --renderer github-actions)
+          else
+            formatter=(cat)
+          fi
+          xcodebuild \
+            -project ios/Aigo.xcodeproj \
+            -scheme Aigo \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$ARCHIVE_PATH" \
+            -resultBundlePath "$RESULT_BUNDLE" \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            "${overrides[@]}" \
+            archive 2>&1 | tee "$BUILD_LOG" | "${formatter[@]}"
+
+      - name: Package IPA
+        shell: bash
+        run: bash scripts/package-ipa.sh "$ARCHIVE_PATH" "$OUT_DIR/Aigo-unsigned.ipa"
+
+      - name: Verify IPA
+        shell: bash
+        run: bash scripts/verify-ipa.sh "$OUT_DIR/Aigo-unsigned.ipa"
+
+      - name: Summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          plist="$ARCHIVE_PATH/Products/Applications/Aigo.app/Info.plist"
+          pb() { /usr/libexec/PlistBuddy -c "Print :$1" "$plist" 2>/dev/null || echo "?"; }
+          {
+            echo "### Aigo-unsigned.ipa"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Bundle id | \`$(pb CFBundleIdentifier)\` |"
+            echo "| Version | $(pb CFBundleShortVersionString) ($(pb CFBundleVersion)) |"
+            echo "| Xcode | $(xcodebuild -version | head -n 1) |"
+            echo "| Size | $(du -h "$OUT_DIR/Aigo-unsigned.ipa" | cut -f1) |"
+            echo "| SHA-256 | \`$(cut -d' ' -f1 "$OUT_DIR/Aigo-unsigned.ipa.sha256")\` |"
+            echo ""
+            echo "Download the **Aigo-unsigned-ipa** artifact below, unzip it, and sign the .ipa with Signulous."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v7
+        with:
+          name: Aigo-unsigned-ipa
+          path: |
+            ${{ runner.temp }}/out/Aigo-unsigned.ipa
+            ${{ runner.temp }}/out/Aigo-unsigned.ipa.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Show build errors
+        if: failure()
+        shell: bash
+        run: |
+          if [ -f "$BUILD_LOG" ]; then
+            {
+              echo "### Build errors (first 60)"
+              echo '```'
+              grep -E '(error:|\*\* ARCHIVE FAILED|BUILD FAILED)' "$BUILD_LOG" | head -n 60 || echo "(no 'error:' lines found; see the xcodebuild-log artifact)"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload xcodebuild log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: xcodebuild-log
+          path: |
+            ${{ runner.temp }}/xcodebuild.log
+            ${{ runner.temp }}/Aigo.xcresult
+            ios/project.yml
+          if-no-files-found: ignore
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: Aigo-unsigned-ipa
+          path: dist
+
+      - name: Verify checksum
+        shell: bash
+        working-directory: dist
+        run: sha256sum -c Aigo-unsigned.ipa.sha256
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            dist/Aigo-unsigned.ipa
+            dist/Aigo-unsigned.ipa.sha256
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          fail_on_unmatched_files: true
