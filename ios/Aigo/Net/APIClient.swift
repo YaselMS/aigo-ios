@@ -258,6 +258,37 @@ final class APIClient: @unchecked Sendable {
         try await get("/api/v1/sessions", as: [SessionInfo].self)
     }
 
+    /// Search (v0.3 host): titles, prompts and older or outside-Aigo chats.
+    /// Older hosts ignore `q` and return every session.
+    func searchSessions(_ query: String) async throws -> [SessionInfo] {
+        try await get("/api/v1/sessions?q=\(APIClient.queryValue(query))", as: [SessionInfo].self)
+    }
+
+    /// "Looks good": moves a session from Review to Done (v0.3 host).
+    func seen(_ id: String) async throws {
+        try await call("POST", "/api/v1/sessions/\(id)/seen")
+    }
+
+    /// Older hosts: marks the session viewed (done -> idle).
+    func viewed(_ id: String) async throws {
+        try await call("POST", "/api/v1/sessions/\(id)/viewed")
+    }
+
+    func gitStatus(cwd: String) async throws -> GitStatus {
+        try await get("/api/v1/git/status?cwd=\(APIClient.queryValue(cwd))", as: GitStatus.self)
+    }
+
+    func gitDiff(cwd: String, path: String) async throws -> String {
+        let p = "/api/v1/git/diff?cwd=\(APIClient.queryValue(cwd))&path=\(APIClient.queryValue(path))"
+        return try await get(p, as: GitDiff.self).diff ?? ""
+    }
+
+    static func queryValue(_ s: String) -> String {
+        var allowed = CharacterSet.urlQueryAllowed
+        allowed.remove(charactersIn: "&=+?#")
+        return s.addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
+    }
+
     func inbox() async throws -> [InboxItem] {
         try await get("/api/v1/inbox", as: [InboxItem].self)
     }

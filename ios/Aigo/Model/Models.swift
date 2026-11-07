@@ -31,6 +31,12 @@ struct SessionInfo: Codable, Identifiable, Equatable {
     var cols: Int?
     var rows: Int?
     var lastOutputAt: String?
+    // v0.3 board (host issue #27). Optional: older hosts omit them and the
+    // app computes the column itself (SessionInfo.boardColumn).
+    var board: String?         // ask | work | review | done | "" (off the board)
+    var lastActivity: String?
+    var seenAt: String?
+    var external: Bool?
 }
 
 /// inbox.Item (internal/inbox/inbox.go).
@@ -109,6 +115,43 @@ struct ScreenState: Codable, Equatable {
     var menu: ScreenMenu?
     var preview: [String]?
     var working: String?
+}
+
+/// gitx.File (GET /api/v1/git/status).
+struct GitFile: Codable, Identifiable, Equatable {
+    var path: String
+    var origPath: String?
+    var index: String?
+    var worktree: String?
+    var added: Int?
+    var deleted: Int?
+    var binary: Bool?
+    var id: String { path }
+
+    /// One status letter: M, A, D, R, ? ...
+    var letter: String {
+        let w = (worktree ?? ".").trimmingCharacters(in: .whitespaces)
+        let i = (index ?? ".").trimmingCharacters(in: .whitespaces)
+        if !w.isEmpty && w != "." { return w }
+        if !i.isEmpty && i != "." { return i }
+        return "M"
+    }
+}
+
+/// gitx.Status.
+struct GitStatus: Codable, Equatable {
+    var root: String?
+    var branch: String?
+    var upstream: String?
+    var ahead: Int?
+    var behind: Int?
+    var files: [GitFile]?
+    var added: Int?
+    var deleted: Int?
+}
+
+struct GitDiff: Codable {
+    var diff: String?
 }
 
 /// GET /api/v1/recent-dirs

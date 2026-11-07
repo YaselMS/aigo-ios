@@ -14,7 +14,7 @@ struct SessionRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(session.displayTitle)
-                        .font(.body.weight(.semibold))
+                        .font(.aigo(.body, .semibold))
                         .foregroundStyle(Theme.text)
                         .lineLimit(2)
                     Spacer(minLength: 6)
@@ -31,7 +31,7 @@ struct SessionRow: View {
                     .truncationMode(.middle)
                 HStack(alignment: .bottom, spacing: 10) {
                     Text(session.nowLine)
-                        .font(.footnote)
+                        .font(.aigo(.footnote))
                         .foregroundStyle(status == .needsYou ? Theme.coralText : Theme.text.opacity(0.85))
                         .lineLimit(2)
                         .frame(maxWidth: .infinity, alignment: .leading)

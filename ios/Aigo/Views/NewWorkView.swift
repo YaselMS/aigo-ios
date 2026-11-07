@@ -27,7 +27,7 @@ struct NewWorkView: View {
                         HStack(spacing: 10) {
                             ProgressView().controlSize(.small)
                             Text("Looking for agents on \(store.hostLabel)…")
-                                .font(.footnote)
+                                .font(.aigo(.footnote))
                                 .foregroundStyle(Theme.secondary)
                         }
                         .frame(minHeight: 44)
@@ -117,7 +117,6 @@ struct NewWorkView: View {
                         ProgressView()
                     } else {
                         Button("Start") { start() }
-                            .fontWeight(.bold)
                             .disabled(choice.isEmpty || store.client == nil)
                     }
                 }
@@ -143,7 +142,7 @@ struct NewWorkView: View {
                         .foregroundStyle(enabled ? Theme.text : Theme.secondary)
                     if let detail = detail {
                         Text(detail)
-                            .font(.footnote)
+                            .font(.aigo(.footnote))
                             .foregroundStyle(Theme.secondary)
                     }
                 }

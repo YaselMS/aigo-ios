@@ -38,6 +38,12 @@ final class AppStore: ObservableObject {
     @Published var showNewWork = false
     /// Agent New work should preselect (e.g. "codex" from the empty state).
     @Published var newWorkAgent: String?
+    @Published var showSearch = false
+    /// Sessions marked "Looks good" here; shown as Done until the host agrees.
+    @Published private(set) var locallySeen: Set<String> = []
+    /// Sessions found by search that are not in the live list (older chats,
+    /// chats started outside Aigo), so they can be opened.
+    @Published private(set) var searchCache: [String: SessionInfo] = [:]
 
     private(set) var client: APIClient?
     private var events: LiveSocket?
@@ -140,7 +146,93 @@ final class AppStore: ObservableObject {
     }
 
     func session(id: String) -> SessionInfo? {
-        sessions.first { $0.id == id }
+        sessions.first { $0.id == id } ?? searchCache[id]
+    }
+
+    // MARK: - Board
+
+    /// True when the host sends the v0.3 `board` field.
+    var hostHasBoard: Bool {
+        sessions.contains { $0.board != nil }
+    }
+
+    func column(of s: SessionInfo, now: Date = Date()) -> BoardColumn? {
+        var col = s.boardColumn(hostHasBoard: hostHasBoard, now: now)
+        if col == .review && locallySeen.contains(s.id) { col = .done }
+        return col
+    }
+
+    /// Cards of every column. Pending approvals and questions are their own
+    /// cards in Needs you (even for agents outside Aigo); a session with a
+    /// pending item is shown only through that item.
+    var board: [BoardColumn: [BoardCard]] {
+        let now = Date()
+        var out: [BoardColumn: [BoardCard]] = [.ask: [], .work: [], .review: [], .done: []]
+        let pending = pendingItems
+        let withItems = Set(pending.compactMap { $0.sessionId })
+        for item in pending {
+            let s = item.sessionId.flatMap { session(id: $0) }
+            out[.ask]?.append(BoardCard(id: "i:" + item.id, column: .ask, item: item, session: s,
+                                        date: AigoDate.parse(item.createdAt)))
+        }
+        for s in sessions where !withItems.contains(s.id) {
+            guard let col = column(of: s, now: now) else { continue }
+            out[col]?.append(BoardCard(id: "s:" + s.id, column: col, item: nil, session: s, date: s.activityDate))
+        }
+        for col in BoardColumn.allCases {
+            if col == .ask {
+                out[col]?.sort { ($0.date ?? .distantPast) < ($1.date ?? .distantPast) }
+            } else {
+                out[col]?.sort { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+            }
+        }
+        return out
+    }
+
+    /// "Looks good": Review -> Done.
+    func markSeen(_ id: String) async -> String? {
+        guard let c = client else { return "Not connected to your PC." }
+        withAnimation(.easeInOut(duration: 0.25)) {
+            _ = locallySeen.insert(id)
+        }
+        do {
+            try await c.seen(id)
+        } catch let e as APIError where e.status == 404 || e.status == 405 {
+            // Host without /seen: mark it viewed instead.
+            try? await c.viewed(id)
+        } catch {
+            withAnimation { _ = locallySeen.remove(id) }
+            return c.problem(for: error).message
+        }
+        return nil
+    }
+
+    /// Search: live sessions filtered here, merged with the host's results
+    /// (which also cover older and outside-Aigo chats on v0.3 hosts).
+    func search(_ query: String) async -> [SessionInfo] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let local = q.isEmpty ? sortedByActivity(sessions) : sortedByActivity(sessions.filter { $0.matches(q) })
+        guard !q.isEmpty, let c = client, let remote = try? await c.searchSessions(q) else { return local }
+        let liveIDs = Set(sessions.map { $0.id })
+        let remoteIDs = Set(remote.map { $0.id })
+        if remoteIDs == liveIDs && remote.contains(where: { !$0.matches(q) }) {
+            // The host ignored `q` (pre-v0.3): keep the local filter.
+            return local
+        }
+        for s in remote where !liveIDs.contains(s.id) {
+            searchCache[s.id] = s
+        }
+        var seen = Set<String>()
+        var merged: [SessionInfo] = []
+        for s in local + remote.map({ session(id: $0.id) ?? $0 }) where !seen.contains(s.id) {
+            seen.insert(s.id)
+            merged.append(s)
+        }
+        return merged
+    }
+
+    private func sortedByActivity(_ list: [SessionInfo]) -> [SessionInfo] {
+        list.sorted { ($0.activityDate ?? .distantPast) > ($1.activityDate ?? .distantPast) }
     }
 
     func agentName(_ id: String?) -> String {
@@ -510,7 +602,7 @@ final class AppStore: ObservableObject {
 
     // MARK: - Live Activity
 
-    private func refreshLiveActivity() {
+    func refreshLiveActivity() {
         guard activeHost != nil else {
             live.end()
             return
@@ -520,13 +612,15 @@ final class AppStore: ObservableObject {
         var headline = ""
         var detail = ""
         var actionId = ""
+        var context = ""
         if let top = pending.first {
-            headline = top.title ?? "An agent needs you"
-            let context = top.contextLine
+            let s = top.sessionId.flatMap { session(id: $0) }
+            headline = s?.displayTitle ?? top.title ?? "An agent needs you"
+            context = top.contextLine
             if let message = top.message, !message.isEmpty {
-                detail = "\(context) · \(message)"
+                detail = message
             } else {
-                detail = context
+                detail = s != nil ? (top.title ?? "") : ""
             }
             let kind = top.kind ?? ""
             if (kind.isEmpty || kind == "permission" || kind == "plan") && (top.options ?? []).isEmpty &&
@@ -535,13 +629,15 @@ final class AppStore: ObservableObject {
             }
         } else if let blocked = sessions.first(where: { $0.status == .needsYou }) {
             headline = blocked.displayTitle
+            context = blocked.subtitle
             detail = "Waiting for your answer"
         } else if let w = working.first {
             headline = w.displayTitle
+            context = w.subtitle
             detail = w.nowLine
         }
         live.update(hostName: hostLabel, working: working.count, needsYou: needsYouCount,
-                    headline: headline, detail: detail, actionId: actionId)
+                    headline: headline, detail: detail, actionId: actionId, context: context)
     }
 
     // MARK: - Loading
@@ -696,6 +792,8 @@ final class AppStore: ObservableObject {
         activity = [:]
         locallyAnswered = []
         answeredHere = []
+        locallySeen = []
+        searchCache = [:]
         hasSnapshot = false
         hostDisplayName = ""
         path = []

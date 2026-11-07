@@ -17,11 +17,11 @@ struct QRScannerSheet: View {
 
             VStack(spacing: 12) {
                 Text(problem ?? "Point the camera at the QR code on your PC.")
-                    .font(.callout)
+                    .font(.aigo(.callout))
                     .foregroundStyle(Theme.text)
                     .multilineTextAlignment(.center)
                     .padding(12)
-                    .background(Theme.bg.opacity(0.85), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .background(Theme.bg.opacity(0.85), in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
                 Button("Cancel") {
                     dismiss()
                 }

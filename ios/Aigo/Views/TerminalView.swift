@@ -16,7 +16,7 @@ struct TerminalPane: View {
                            fontSize: CGFloat(fontSize),
                            onGrid: { cols, rows in model.setPhoneSize(cols: cols, rows: rows) })
         }
-        .background(Color.black.opacity(0.45))
+        .background(Theme.codeBg)
     }
 
     private var strip: some View {
@@ -62,7 +62,7 @@ struct TerminalPane: View {
                 }
             } label: {
                 Image(systemName: "textformat.size")
-                    .font(.footnote.weight(.semibold))
+                    .font(.aigo(.footnote, .semibold))
                     .foregroundStyle(Theme.text)
                     .frame(width: 44, height: 36)
                     .contentShape(Rectangle())
@@ -104,7 +104,7 @@ struct TerminalScreen: View {
                         }
                     }
                 }
-                .font(.system(size: fontSize, design: .monospaced))
+                .font(.custom(TerminalScreen.fontName, fixedSize: fontSize))
                 .textSelection(.enabled)
                 .fixedSize(horizontal: true, vertical: true)
                 .padding(10)
@@ -119,12 +119,18 @@ struct TerminalScreen: View {
 
     private func report(_ size: CGSize) {
         guard let onGrid = onGrid, size.width > 40, size.height > 40 else { return }
-        let font = UIFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        let font = UIFont(name: TerminalScreen.fontName, size: fontSize)
+            ?? UIFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
         let cell = ("M" as NSString).size(withAttributes: [.font: font])
         guard cell.width > 0, font.lineHeight > 0 else { return }
         let cols = Int((size.width - 20) / cell.width)
         let rows = Int((size.height - 20) / font.lineHeight)
         onGrid(cols, rows)
+    }
+
+    /// The chosen UI font, or JetBrains Mono when that font lacks terminal glyphs.
+    static var fontName: String {
+        AigoAppearance.current.family.terminalFamily.postScriptName(.regular)
     }
 
     /// Trims trailing spaces per line and trailing blank lines.

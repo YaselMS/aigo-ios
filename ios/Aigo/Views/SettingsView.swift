@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var store: AppStore
+    @EnvironmentObject private var appearance: AppearanceStore
     @State private var showPair = false
     @State private var forgetting: HostCredentials?
 
@@ -91,12 +92,70 @@ struct SettingsView: View {
             }
             .listRowBackground(Theme.surface)
 
+            Section {
+                ForEach(AigoFontFamily.allCases) { family in
+                    Button {
+                        Haptics.selection()
+                        appearance.family = family
+                    } label: {
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(family.displayName)
+                                    .font(.custom(family.postScriptName(.regular), size: 15 * appearance.size.scale))
+                                    .foregroundStyle(Theme.text)
+                                Text("2 need you · 3 working")
+                                    .font(.custom(family.postScriptName(.regular), size: 12 * appearance.size.scale))
+                                    .foregroundStyle(Theme.secondary)
+                            }
+                            Spacer()
+                            if family == appearance.family {
+                                Image(systemName: "checkmark")
+                                    .foregroundStyle(Theme.lime)
+                            }
+                        }
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                    }
+                    .accessibilityAddTraits(family == appearance.family ? .isSelected : [])
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Text size")
+                        .foregroundStyle(Theme.text)
+                    HStack(spacing: 6) {
+                        ForEach(AigoTextSize.allCases) { size in
+                            let on = size == appearance.size
+                            Button {
+                                Haptics.selection()
+                                appearance.size = size
+                            } label: {
+                                Text(size.rawValue)
+                                    .font(.aigo(.callout, on ? .bold : .regular))
+                                    .foregroundStyle(on ? Theme.bg : Theme.text)
+                                    .frame(maxWidth: .infinity, minHeight: Theme.buttonHeight)
+                                    .background(on ? Theme.text : Theme.softWhite,
+                                                in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(Text(size.label))
+                            .accessibilityAddTraits(on ? .isSelected : [])
+                        }
+                    }
+                }
+                .padding(.vertical, 6)
+            } header: {
+                Text("Appearance")
+            } footer: {
+                Text("Used everywhere in the app, the Live Activity and the Dynamic Island. The terminal uses JetBrains Mono when Share Tech Mono is picked, for its box-drawing characters.")
+            }
+            .listRowBackground(Theme.surface)
+
             Section("Alerts") {
                 Text("Aigo shows banners and a Live Activity while the app is open or was used recently. iOS pauses the connection after that.")
-                    .font(.footnote)
+                    .font(.aigo(.footnote))
                     .foregroundStyle(Theme.secondary)
                 Text("For alerts when the app is closed, turn on the ntfy notifications on your PC (Aigo → Settings → Notifications) and install the ntfy app on this iPhone, subscribed to the same topic.")
-                    .font(.footnote)
+                    .font(.aigo(.footnote))
                     .foregroundStyle(Theme.secondary)
             }
             .listRowBackground(Theme.surface)
@@ -104,7 +163,7 @@ struct SettingsView: View {
             Section("About") {
                 LabeledContent("Version", value: SettingsView.versionString)
                 Text("Aigo controls the coding agents and terminals running on your PC.")
-                    .font(.footnote)
+                    .font(.aigo(.footnote))
                     .foregroundStyle(Theme.secondary)
             }
             .listRowBackground(Theme.surface)
@@ -155,7 +214,7 @@ struct SettingsView: View {
 
     static var versionString: String {
         let info = Bundle.main.infoDictionary
-        let version = info?["CFBundleShortVersionString"] as? String ?? "0.2.0"
+        let version = info?["CFBundleShortVersionString"] as? String ?? "0.3.0"
         let build = info?["CFBundleVersion"] as? String ?? "1"
         return "\(version) (\(build))"
     }

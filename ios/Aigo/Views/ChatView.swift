@@ -13,7 +13,7 @@ struct ChatView: View {
                         Button("Load earlier messages") {
                             model.loadOlder()
                         }
-                        .font(.footnote.weight(.semibold))
+                        .font(.aigo(.footnote, .semibold))
                         .frame(maxWidth: .infinity, minHeight: 44)
                     }
                     let items = model.visible
@@ -23,7 +23,7 @@ struct ChatView: View {
                                 ProgressView().tint(Theme.secondary)
                             }
                             Text(model.waiting ? "Waiting for the conversation to start…" : "No messages yet. Say what it should do.")
-                                .font(.callout)
+                                .font(.aigo(.callout))
                                 .foregroundStyle(Theme.secondary)
                                 .multilineTextAlignment(.center)
                         }
@@ -36,7 +36,7 @@ struct ChatView: View {
                     }
                     if let error = model.error, items.isEmpty {
                         Text(error)
-                            .font(.footnote)
+                            .font(.aigo(.footnote))
                             .foregroundStyle(Theme.coral)
                     }
                     Color.clear
@@ -75,7 +75,7 @@ struct MessageRow: View {
             ToolResultRow(message: message)
         case "image":
             Label("Image", systemImage: "photo")
-                .font(.footnote)
+                .font(.aigo(.footnote))
                 .foregroundStyle(Theme.secondary)
         default:
             textRow
@@ -90,24 +90,26 @@ struct MessageRow: View {
             HStack {
                 Spacer(minLength: 48)
                 Text(text)
-                    .font(.body)
+                    .font(.aigo(.callout))
+                    .lineSpacing(3)
                     .foregroundStyle(Theme.text)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 9)
-                    .background(Color(aigoHex: 0x1B1E22), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Theme.line, lineWidth: 1))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(Color(aigoHex: 0x1B1E22), in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
+                        .strokeBorder(Color(aigoHex: 0x2A2D31), lineWidth: 1))
                     .textSelection(.enabled)
             }
         case "system":
             Text(text)
-                .font(.footnote)
+                .font(.aigo(.footnote))
                 .foregroundStyle(Theme.secondary)
                 .frame(maxWidth: .infinity, alignment: .center)
                 .multilineTextAlignment(.center)
         default:
             Text(MessageRow.markdown(text))
-                .font(.body)
-                .lineSpacing(3)
+                .font(.aigo(.callout))
+                .lineSpacing(5)
                 .foregroundStyle(Theme.text)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
@@ -130,21 +132,21 @@ struct ToolCallRow: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: "wrench.and.screwdriver")
-                .font(.caption)
+                .font(.system(size: 11))
                 .foregroundStyle(Theme.secondary)
             Text(message.toolName ?? "tool")
-                .font(Theme.monoSmall.weight(.semibold))
+                .font(.aigo(.caption, .semibold))
                 .foregroundStyle(Theme.text)
             Text(oneLine)
-                .font(Theme.monoSmall)
+                .font(.aigo(.caption))
                 .foregroundStyle(Theme.secondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous).strokeBorder(Theme.line, lineWidth: 1))
     }
 
     private var oneLine: String {
@@ -165,9 +167,9 @@ struct ToolResultRow: View {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                        .font(.caption2.weight(.semibold))
+                        .font(.system(size: 10, weight: .semibold))
                     Text(message.isError == true ? "Tool error" : "Tool output")
-                        .font(.footnote)
+                        .font(.aigo(.caption))
                     Spacer()
                 }
                 .foregroundStyle(message.isError == true ? Theme.coral : Theme.secondary)
@@ -177,11 +179,11 @@ struct ToolResultRow: View {
             .buttonStyle(.plain)
             if expanded {
                 Text(message.text ?? "")
-                    .font(Theme.monoSmall)
+                    .font(.aigo(.caption))
                     .foregroundStyle(Theme.text.opacity(0.9))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(8)
-                    .background(Theme.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .background(Theme.codeBg, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
                     .textSelection(.enabled)
             }
         }

@@ -7,3 +7,5 @@
 *.swift text eol=lf
 *.plist text eol=lf
 *.entitlements text eol=lf
+*.ttf binary
+*.png binary

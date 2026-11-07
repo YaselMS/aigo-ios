@@ -2,6 +2,7 @@ import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject private var store: AppStore
+    @EnvironmentObject private var appearance: AppearanceStore
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -43,12 +44,25 @@ struct RootView: View {
                 }
             }
             .environmentObject(store)
+            .environmentObject(appearance)
+            .environment(\.font, .aigo(.body))
             .preferredColorScheme(.dark)
             .tint(Theme.lime)
         }
         .sheet(isPresented: $store.showNewWork) {
             NewWorkView(preferredAgent: store.newWorkAgent)
                 .environmentObject(store)
+                .environmentObject(appearance)
+                .environment(\.font, .aigo(.body))
+                .preferredColorScheme(.dark)
+                .tint(Theme.lime)
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $store.showSearch) {
+            SearchView()
+                .environmentObject(store)
+                .environmentObject(appearance)
+                .environment(\.font, .aigo(.body))
                 .preferredColorScheme(.dark)
                 .tint(Theme.lime)
                 .presentationDragIndicator(.visible)

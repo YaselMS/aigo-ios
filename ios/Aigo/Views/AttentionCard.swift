@@ -1,112 +1,132 @@
 import SwiftUI
 
-/// "Needs you" on Home: the oldest pending request on top, the rest peeking
-/// behind it. Answer one and the next slides up, so several can be answered
-/// in a row without navigating. Swipe right to approve, left to deny.
-struct NeedsYouStack: View {
-    let items: [InboxItem]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                SectionHeader(title: "Needs you", count: items.count, tint: Theme.coral)
-                if let top = items.first, top.canSwipe {
-                    Text("swipe → approve · ← deny")
-                        .font(Theme.monoCaption)
-                        .foregroundStyle(Theme.secondary.opacity(0.8))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                        .accessibilityHidden(true)
-                }
-            }
-            if let top = items.first {
-                ZStack {
-                    AttentionCard(item: top, swipeEnabled: true, position: items.count > 1 ? "1 of \(items.count)" : nil)
-                        .id(top.id)
-                        .transition(.asymmetric(
-                            insertion: .scale(scale: 0.94, anchor: .bottom).combined(with: .opacity),
-                            removal: .opacity
-                        ))
-                }
-                .background(alignment: .bottom) {
-                    plates(count: min(items.count - 1, 2))
-                }
-                .padding(.bottom, CGFloat(min(items.count - 1, 2)) * 7)
-            }
-        }
-    }
-
-    /// Edges of the cards waiting behind the top one.
-    private func plates(count: Int) -> some View {
-        ZStack(alignment: .bottom) {
-            ForEach(0..<max(count, 0), id: \.self) { i in
-                let depth = CGFloat(count - i)
-                RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
-                    .fill(Theme.coralWash.opacity(0.9))
-                    .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
-                        .strokeBorder(Theme.coral.opacity(0.35 - Double(depth) * 0.1), lineWidth: 1))
-                    .padding(.horizontal, depth * 10)
-                    .offset(y: depth * 7)
-            }
-        }
-        .accessibilityHidden(true)
-    }
-}
-
 extension InboxItem {
-    /// Plain approve/deny requests can be swiped; choices need a tap.
-    var canSwipe: Bool {
-        let k = kind ?? ""
-        if k == "question" { return false }
-        if k == "ask" && !(options ?? []).isEmpty { return false }
-        return true
-    }
-
     var isCommand: Bool {
         let tool = (toolName ?? "").lowercased()
         return ["bash", "shell", "powershell", "exec", "exec_command", "local_shell", "run_command"].contains(tool)
     }
+
+    /// The short "what it wants" line of a card.
+    var askLine: String {
+        switch kind ?? "" {
+        case "question": return "Has a question"
+        case "plan": return "Wants you to approve a plan"
+        case "ask": return "Wants you to choose"
+        default: return isCommand ? "Wants to run a command" : "Wants your approval"
+        }
+    }
 }
 
-/// One pending approval / question.
+/// Shared frame of a board card: coral for needs you, plain otherwise.
+private struct BoardCardFrame: ViewModifier {
+    let needsYou: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .aigoCard(border: needsYou ? Theme.coral : Color(aigoHex: 0x2A2D31),
+                      fill: needsYou ? Theme.coralWash : Theme.surface)
+    }
+}
+
+/// Title, "agent · project · age" and one line; tapping opens the conversation.
+private struct CardHead: View {
+    let title: String
+    let meta: String
+    let line: String
+    let lineColor: Color
+    let sessionID: String?
+    @EnvironmentObject private var store: AppStore
+
+    var body: some View {
+        Button {
+            if let sid = sessionID, !sid.isEmpty { store.openSession(sid) }
+        } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.aigo(.callout, .semibold))
+                    .foregroundStyle(Theme.text)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                if !meta.isEmpty {
+                    Text(meta)
+                        .font(.aigo(.caption2))
+                        .foregroundStyle(Theme.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                if !line.isEmpty {
+                    Text(line)
+                        .font(.aigo(.footnote))
+                        .foregroundStyle(lineColor)
+                        .lineLimit(3)
+                        .multilineTextAlignment(.leading)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint(Text(sessionID == nil ? "" : "Opens the conversation"))
+    }
+}
+
+/// A pending approval or question, answered on the card (Home and the
+/// conversation).
 struct AttentionCard: View {
     let item: InboxItem
-    var swipeEnabled: Bool = false
-    var position: String? = nil
-    /// Hides the "Open" link (already inside the session).
+    var session: SessionInfo? = nil
+    /// Inside the conversation: no title row, it is the header already.
     var inSession: Bool = false
+    var position: String? = nil
 
     @EnvironmentObject private var store: AppStore
     @State private var confirming = false
     @State private var busy = false
     @State private var error: String?
-    @State private var offset: CGFloat = 0
-
-    private static let threshold: CGFloat = 110
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            header
-
-            Text(item.title ?? "Needs your answer")
-                .font(Theme.cardTitle)
-                .foregroundStyle(Theme.coralText)
-                .fixedSize(horizontal: false, vertical: true)
+            if inSession {
+                HStack {
+                    Text("\(store.agentName(item.agent)) is asking")
+                        .font(.aigo(.footnote))
+                        .foregroundStyle(Theme.coralText)
+                    Spacer(minLength: 4)
+                    if let position = position {
+                        Text(position)
+                            .font(.aigo(.caption2))
+                            .foregroundStyle(Theme.secondary)
+                    }
+                }
+                Text(item.title ?? "Needs your answer")
+                    .font(.aigo(.footnote))
+                    .foregroundStyle(Theme.text)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                CardHead(title: session?.displayTitle ?? item.title ?? "Needs your answer",
+                         meta: meta,
+                         line: session != nil ? (item.title ?? item.askLine) : item.askLine,
+                         lineColor: Theme.coralText,
+                         sessionID: item.sessionId)
+            }
 
             if let message = item.message, !message.isEmpty {
                 Text(message)
-                    .font(item.isCommand ? Theme.monoSmall : .callout)
+                    .font(.aigo(.caption2))
                     .foregroundStyle(item.isCommand ? Theme.coralCode : Theme.text.opacity(0.92))
-                    .lineLimit(12)
+                    .lineLimit(10)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
-                    .background(Color.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 9)
+                    .background(Theme.codeBg, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
                     .textSelection(.enabled)
             }
 
             if let error = error {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(.footnote)
+                    .font(.aigo(.footnote))
                     .foregroundStyle(Theme.coral)
                     .fixedSize(horizontal: false, vertical: true)
                     .transition(.opacity)
@@ -114,209 +134,214 @@ struct AttentionCard: View {
 
             actions
         }
-        .padding(14)
-        .aigoCard(border: Theme.coral.opacity(0.8), fill: Theme.coralWash)
-        .overlay(alignment: offset > 0 ? .leading : .trailing) { swipeHint }
-        .offset(x: offset)
-        .rotationEffect(.degrees(Double(offset) / 30), anchor: .bottom)
-        .gesture(drag, including: swipeEnabled && item.canSwipe && !busy && !confirming ? .all : .subviews)
+        .modifier(BoardCardFrame(needsYou: true))
         .disabled(busy)
-        .opacity(busy && offset == 0 ? 0.6 : 1.0)
+        .opacity(busy ? 0.6 : 1.0)
         .animation(.easeInOut(duration: 0.2), value: confirming)
         .animation(.easeInOut(duration: 0.2), value: error)
         .accessibilityElement(children: .contain)
-        .accessibilityAction(named: Text("Approve")) {
-            if item.canSwipe { approveTapped() }
-        }
-        .accessibilityAction(named: Text("Deny")) {
-            if item.canSwipe { denyTapped() }
-        }
     }
 
-    private var header: some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(Theme.coral)
-                .frame(width: 9, height: 9)
-                .background(Circle().fill(Theme.coral.opacity(0.25)).frame(width: 17, height: 17))
-            Text(item.contextLine)
-                .font(Theme.monoCaption)
-                .foregroundStyle(Theme.secondary)
-                .lineLimit(1)
-            if let position = position {
-                Text("· \(position)")
-                    .font(Theme.monoCaption)
-                    .foregroundStyle(Theme.secondary.opacity(0.8))
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 4)
-            if !inSession, let sid = item.sessionId, !sid.isEmpty {
-                Button {
-                    store.openSession(sid)
-                } label: {
-                    Text("Open →")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(Theme.lime)
-                        .frame(minWidth: 44, minHeight: 44)
-                }
-                .buttonStyle(.plain)
-                .padding(.vertical, -10)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var swipeHint: some View {
-        if abs(offset) > 24 {
-            let approving = offset > 0
-            let strength = min(1.0, Double(abs(offset)) / Double(AttentionCard.threshold))
-            Text(approving ? "APPROVE" : "DENY")
-                .font(Theme.monoLabel)
-                .tracking(1.2)
-                .foregroundStyle(approving ? Theme.onCoral : Theme.text)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(approving ? Theme.coral : Theme.surface2, in: Capsule())
-                .opacity(strength)
-                .padding(14)
-                .rotationEffect(.degrees(approving ? -8 : 8))
-                .allowsHitTesting(false)
-        }
-    }
-
-    private var drag: some Gesture {
-        DragGesture(minimumDistance: 18)
-            .onChanged { value in
-                let w = value.translation.width
-                guard abs(w) > abs(value.translation.height) else { return }
-                let crossed = abs(offset) < AttentionCard.threshold && abs(w) >= AttentionCard.threshold
-                offset = w
-                if crossed { Haptics.selection() }
-            }
-            .onEnded { value in
-                let w = value.translation.width
-                let flung = value.predictedEndTranslation.width
-                if w > AttentionCard.threshold || (w > 40 && flung > AttentionCard.threshold * 2.5) {
-                    approveTapped()
-                } else if w < -AttentionCard.threshold || (w < -40 && flung < -AttentionCard.threshold * 2.5) {
-                    denyTapped()
-                } else {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { offset = 0 }
-                }
-            }
+    private var meta: String {
+        var parts = [store.agentName(item.agent)]
+        let place = (item.project?.isEmpty == false) ? item.project! : folderName(item.cwd ?? session?.cwd)
+        if !place.isEmpty { parts.append(place) }
+        if (item.sessionId ?? "").isEmpty { parts.append("outside Aigo") }
+        let age = Age.short(AigoDate.parse(item.createdAt))
+        if !age.isEmpty { parts.append(age) }
+        return parts.joined(separator: " · ")
     }
 
     @ViewBuilder
     private var actions: some View {
         let options = item.options ?? []
         if item.kind == "ask" && !options.isEmpty {
-            VStack(spacing: 8) {
+            VStack(spacing: 6) {
                 ForEach(Array(options.enumerated()), id: \.offset) { pair in
                     Button(pair.element) {
                         Haptics.approve()
-                        run(flyTo: 0) { await store.decide(item, approve: true, choice: pair.element) }
+                        run { await store.decide(item, approve: true, choice: pair.element) }
                     }
-                    .buttonStyle(OutlineButtonStyle(border: Theme.coralLine))
+                    .buttonStyle(SecondaryButtonStyle(alignment: .leading))
                 }
                 Button("Deny") { denyTapped() }
-                    .buttonStyle(OutlineButtonStyle(tint: Theme.secondary, border: Theme.coralLine))
+                    .buttonStyle(SecondaryButtonStyle(tint: Theme.secondary))
             }
         } else if item.kind == "question" {
             if !options.isEmpty && !(item.sessionId ?? "").isEmpty {
-                VStack(spacing: 8) {
+                VStack(spacing: 6) {
                     ForEach(Array(options.enumerated()), id: \.offset) { pair in
-                        Button {
+                        Button(pair.element) {
                             Haptics.approve()
-                            run(flyTo: 0) { await store.answerQuestion(item, number: pair.offset + 1, label: pair.element) }
-                        } label: {
-                            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                Text("\(pair.offset + 1).")
-                                    .font(Theme.monoSmall)
-                                    .foregroundStyle(Theme.secondary)
-                                Text(pair.element)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
+                            run { await store.answerQuestion(item, number: pair.offset + 1, label: pair.element) }
                         }
-                        .buttonStyle(OutlineButtonStyle(border: Theme.coralLine))
+                        .buttonStyle(SecondaryButtonStyle(alignment: .leading))
                     }
                 }
             } else if let sid = item.sessionId, !sid.isEmpty, !inSession {
-                Button("Answer in the session") {
+                Button("Answer in the conversation") {
                     store.openSession(sid)
                 }
-                .buttonStyle(FilledButtonStyle(fill: Theme.coral, foreground: Theme.onCoral))
+                .buttonStyle(SoftButtonStyle(tint: Theme.coral, text: Theme.coralButtonText))
             } else if inSession {
-                Text("Answer it in the terminal below.")
-                    .font(.footnote)
+                Text("Answer it in the terminal.")
+                    .font(.aigo(.footnote))
                     .foregroundStyle(Theme.secondary)
             } else {
                 Text("This agent runs outside Aigo. Answer it in its own terminal.")
-                    .font(.footnote)
+                    .font(.aigo(.footnote))
                     .foregroundStyle(Theme.secondary)
             }
         } else if confirming {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
                 Label("This looks destructive. Run it anyway?", systemImage: "exclamationmark.triangle.fill")
-                    .font(.footnote.weight(.semibold))
+                    .font(.aigo(.footnote, .semibold))
                     .foregroundStyle(Theme.coral)
                     .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 10) {
+                HStack(spacing: 8) {
+                    Button("Yes, run it") {
+                        confirming = false
+                        Haptics.approve()
+                        run { await store.decide(item, approve: true) }
+                    }
+                    .buttonStyle(SoftButtonStyle(tint: Theme.coral, text: Theme.coralButtonText))
                     Button("Cancel") {
                         Haptics.tap()
                         confirming = false
                     }
-                    .buttonStyle(OutlineButtonStyle(border: Theme.coralLine))
-                    Button("Yes, run it") {
-                        confirming = false
-                        Haptics.approve()
-                        run(flyTo: swipeEnabled ? 700 : 0) { await store.decide(item, approve: true) }
-                    }
-                    .buttonStyle(FilledButtonStyle(fill: Theme.coral, foreground: Theme.onCoral))
+                    .buttonStyle(SecondaryButtonStyle())
                 }
             }
-            .transition(.opacity.combined(with: .move(edge: .bottom)))
+            .transition(.opacity)
         } else {
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 Button(item.kind == "plan" ? "Approve plan" : "Approve") { approveTapped() }
-                    .buttonStyle(FilledButtonStyle(fill: Theme.coral, foreground: Theme.onCoral))
+                    .buttonStyle(SoftButtonStyle(tint: Theme.coral, text: Theme.coralButtonText))
                 Button("Deny") { denyTapped() }
-                    .buttonStyle(OutlineButtonStyle(border: Theme.coralLine))
+                    .buttonStyle(SecondaryButtonStyle())
             }
         }
     }
 
     private func approveTapped() {
         if item.looksDestructive {
-            // Two-step: a destructive command always needs the explicit "Yes, run it".
+            // A destructive command always needs the explicit "Yes, run it".
             Haptics.warning()
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
-                offset = 0
-                confirming = true
-            }
+            confirming = true
             return
         }
         Haptics.approve()
-        run(flyTo: swipeEnabled ? 700 : 0) { await store.decide(item, approve: true) }
+        run { await store.decide(item, approve: true) }
     }
 
     private func denyTapped() {
         Haptics.deny()
-        run(flyTo: swipeEnabled ? -700 : 0) { await store.decide(item, approve: false) }
+        run { await store.decide(item, approve: false) }
     }
 
-    private func run(flyTo target: CGFloat, _ op: @escaping () async -> String?) {
+    private func run(_ op: @escaping () async -> String?) {
         busy = true
         error = nil
-        if target != 0 {
-            withAnimation(.easeIn(duration: 0.22)) { offset = target }
-        }
         Task {
             let result = await op()
             busy = false
             if let result = result {
                 Haptics.error()
                 error = result
-                withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) { offset = 0 }
+            }
+        }
+    }
+}
+
+/// A session on the board. Blocked sessions without an inbox item show the
+/// options of the menu on their screen; Review cards have "Looks good".
+struct SessionCard: View {
+    let session: SessionInfo
+    let column: BoardColumn
+    var onError: (String) -> Void = { _ in }
+
+    @EnvironmentObject private var store: AppStore
+    @State private var menu: ScreenMenu?
+    @State private var busy = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            CardHead(title: session.displayTitle, meta: meta, line: line,
+                     lineColor: column == .ask ? Theme.coralText : Theme.secondary,
+                     sessionID: session.id)
+            switch column {
+            case .ask:
+                if let options = menu?.options, !options.isEmpty {
+                    VStack(spacing: 6) {
+                        ForEach(options) { option in
+                            Button(option.label) { choose(option) }
+                                .buttonStyle(SecondaryButtonStyle(alignment: .leading))
+                        }
+                    }
+                } else {
+                    Button("Open to answer") { store.openSession(session.id) }
+                        .buttonStyle(SoftButtonStyle(tint: Theme.coral, text: Theme.coralButtonText))
+                }
+            case .review:
+                Button("Looks good") {
+                    Haptics.success()
+                    Task {
+                        if let err = await store.markSeen(session.id) { onError(err) }
+                    }
+                }
+                .buttonStyle(SoftButtonStyle(tint: Theme.ice, text: Theme.iceText))
+            case .work, .done:
+                EmptyView()
+            }
+        }
+        .modifier(BoardCardFrame(needsYou: column == .ask))
+        .disabled(busy)
+        .opacity(busy ? 0.6 : 1)
+        .task(id: column == .ask ? (session.statusChangedAt ?? "ask") : "") {
+            guard column == .ask, session.isRunning, let c = store.client else { return }
+            menu = (try? await c.screen(session.id))?.menu
+        }
+    }
+
+    private var meta: String {
+        var parts = [session.isAgent ? store.agentName(session.agent) : "Terminal"]
+        let folder = folderName(session.cwd)
+        if session.isExternal {
+            parts.append("outside Aigo")
+        } else if !folder.isEmpty {
+            parts.append(folder)
+        }
+        let age = Age.short(session.activityDate)
+        if !age.isEmpty { parts.append(age) }
+        return parts.joined(separator: " · ")
+    }
+
+    private var line: String {
+        let prompt = (session.lastPrompt ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        switch column {
+        case .ask:
+            return (menu?.title).flatMap { $0.isEmpty ? nil : $0 } ?? "Waiting for your answer"
+        case .work:
+            return session.status == .stalled ? "Quiet for a while" : (prompt.isEmpty ? "Working…" : prompt)
+        case .review:
+            return prompt.isEmpty ? "Finished. Have a look." : "Finished: \(prompt)"
+        case .done:
+            if !session.isRunning { return session.nowLine }
+            return prompt.isEmpty ? "Reviewed" : prompt
+        }
+    }
+
+    private func choose(_ option: MenuOption) {
+        Haptics.approve()
+        busy = true
+        Task {
+            let err = await store.chooseMenu(session.id, number: option.number, label: option.label)
+            busy = false
+            if let err {
+                Haptics.error()
+                onError(err)
+            } else {
+                menu = nil
             }
         }
     }

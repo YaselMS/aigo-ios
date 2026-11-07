@@ -8,7 +8,8 @@ final class LiveActivityController {
     private var current: Activity<AigoActivityAttributes>?
     private var last: AigoActivityAttributes.ContentState?
 
-    func update(hostName: String, working: Int, needsYou: Int, headline: String, detail: String, actionId: String) {
+    func update(hostName: String, working: Int, needsYou: Int, headline: String, detail: String, actionId: String,
+                context: String) {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
         if working == 0 && needsYou == 0 {
             end()
@@ -20,7 +21,10 @@ final class LiveActivityController {
             headline: String(headline.prefix(120)),
             detail: String(detail.prefix(200)),
             actionId: actionId,
-            updatedAt: Date()
+            updatedAt: Date(),
+            context: String(context.prefix(80)),
+            fontFamily: AigoAppearance.current.family.rawValue,
+            textSize: AigoAppearance.current.size.rawValue
         )
         if current == nil {
             current = Activity<AigoActivityAttributes>.activities.first

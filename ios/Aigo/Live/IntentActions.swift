@@ -27,10 +27,12 @@ enum IntentActions {
             if let failure = failure {
                 state.headline = "Couldn't answer from here"
                 state.detail = failure
+                state.context = ""
             } else {
                 state.needsYou = max(0, state.needsYou - 1)
                 state.headline = approve ? "Approved" : "Denied"
                 state.detail = state.needsYou > 0 ? "Open Aigo for the next one." : "Nothing else needs you."
+                state.context = ""
             }
             state.updatedAt = Date()
             await activity.update(ActivityContent(state: state, staleDate: Date().addingTimeInterval(30 * 60)))

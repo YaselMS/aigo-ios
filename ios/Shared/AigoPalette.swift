@@ -11,7 +11,7 @@ extension Color {
     }
 }
 
-/// Aigo visual identity (style A, "Lanes"), shared by the app and the widget extension.
+/// Aigo colours, shared by the app and the widget extension.
 enum AigoPalette {
     static let background = Color(aigoHex: 0x0B0C0E)    // graphite
     static let surface = Color(aigoHex: 0x121417)       // cards, rows
@@ -30,4 +30,7 @@ enum AigoPalette {
     static let coralLine = Color(aigoHex: 0x3A2A25)
     static let onAccent = Color(aigoHex: 0x0B0C0E)      // text on lime
     static let onCoral = Color(aigoHex: 0x1A0B06)       // text on coral
+    static let coralButtonText = Color(aigoHex: 0xFF9A7E) // text of soft coral buttons
+    static let iceText = Color(aigoHex: 0x9CC6D6)       // text of soft ice buttons
+    static let iconSquare = Color(aigoHex: 0x1B1E22)    // app icon background
 }

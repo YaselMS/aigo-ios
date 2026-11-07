@@ -130,3 +130,125 @@ extension InboxItem {
         return false
     }
 }
+
+// MARK: - Board (v0.3)
+
+/// The four columns of the board (iPhone: tabs).
+enum BoardColumn: String, CaseIterable, Identifiable {
+    case ask, work, review, done
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .ask: return "Needs you"
+        case .work: return "Working"
+        case .review: return "Review"
+        case .done: return "Done"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .ask: return AigoPalette.coral
+        case .work: return AigoPalette.lime
+        case .review: return AigoPalette.ice
+        case .done: return AigoPalette.idle
+        }
+    }
+
+    var emptyText: String {
+        switch self {
+        case .ask: return "Nothing needs you."
+        case .work: return "Nothing running."
+        case .review: return "All reviewed."
+        case .done: return "Nothing yet today."
+        }
+    }
+}
+
+extension SessionInfo {
+    /// Most recent sign of life.
+    var activityDate: Date? {
+        AigoDate.parse(lastActivity) ?? AigoDate.parse(lastActivityAt) ?? AigoDate.parse(lastOutputAt) ??
+            AigoDate.parse(statusChangedAt) ?? AigoDate.parse(startedAt) ?? AigoDate.parse(createdAt)
+    }
+
+    var isExternal: Bool { external == true }
+
+    /// Board column. Uses the host's `board` field when the host sends one
+    /// (`hostHasBoard`: any session carried the field, so a missing value
+    /// means off the board); otherwise it is computed from the status:
+    /// needs you = blocked, working = active in the last 30 minutes,
+    /// review = finished a turn and not seen yet, done = touched today.
+    func boardColumn(hostHasBoard: Bool, now: Date = Date()) -> BoardColumn? {
+        if hostHasBoard {
+            if status == .needsYou { return .ask }
+            return BoardColumn(rawValue: board ?? "")
+        }
+        let last = activityDate
+        let today = last.map { Calendar.current.isDate($0, inSameDayAs: now) } ?? false
+        switch status {
+        case .needsYou:
+            return .ask
+        case .working, .stalled:
+            guard let last else { return .work }
+            return now.timeIntervalSince(last) < 30 * 60 ? .work : nil
+        case .done:
+            return .review
+        case .idle, .exited:
+            guard isAgent, today else { return nil }
+            // Opened but never given a task: not part of the board.
+            if (lastPrompt ?? "").isEmpty && (convTitle ?? "").isEmpty { return nil }
+            return .done
+        }
+    }
+}
+
+/// "now", "4m", "3h", "2d".
+enum Age {
+    static func short(_ date: Date?, now: Date = Date()) -> String {
+        guard let date else { return "" }
+        let s = max(0, now.timeIntervalSince(date))
+        if s < 60 { return "now" }
+        let m = Int(s / 60)
+        if m < 60 { return "\(m)m" }
+        let h = m / 60
+        if h < 24 { return "\(h)h" }
+        return "\(h / 24)d"
+    }
+}
+
+/// One card on the board: a pending approval/question, or a session.
+struct BoardCard: Identifiable, Equatable {
+    let id: String
+    let column: BoardColumn
+    let item: InboxItem?
+    let session: SessionInfo?
+    let date: Date?
+}
+
+extension SessionInfo {
+    /// Case-insensitive match on what a person would search for.
+    func matches(_ query: String) -> Bool {
+        let fields = [title, convTitle, lastPrompt, cwd, agent, AgentNames.display(agent), model]
+        return fields.contains { ($0 ?? "").localizedCaseInsensitiveContains(query) }
+    }
+}
+
+/// One card on the board: a pending approval/question, or a session.
+struct BoardCard: Identifiable, Equatable {
+    let id: String
+    let column: BoardColumn
+    let item: InboxItem?
+    let session: SessionInfo?
+    let date: Date?
+}
+
+extension SessionInfo {
+    /// Case-insensitive match on what a person would search for.
+    func matches(_ query: String) -> Bool {
+        let fields = [title, convTitle, lastPrompt, cwd, agent, AgentNames.display(agent), model]
+        return fields.contains { ($0 ?? "").localizedCaseInsensitiveContains(query) }
+    }
+}

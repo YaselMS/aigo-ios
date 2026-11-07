@@ -17,7 +17,7 @@ xcodebuild -project Aigo.xcodeproj -scheme Aigo -configuration Release \
 ```
 
 - Spec: `ios/project.yml`; project `Aigo`; scheme `Aigo` (builds both targets).
-- App target `Aigo` (bundle id `dev.aigo.app`, iOS 17, iPhone, 0.2.0; CI sets the build number).
+- App target `Aigo` (bundle id `dev.aigo.app`, iOS 17, iPhone, 0.3.0; CI sets the build number).
 - Widget extension `AigoWidgets` (`dev.aigo.app.widgets`), embedded in the app:
   Live Activity on the Lock Screen and in the Dynamic Island.
 - Swift 5 language mode, minimal concurrency checking. No signing settings,
@@ -34,6 +34,11 @@ Shared/            compiled into both targets
   AigoActivityAttributes.swift   ActivityKit attributes + content state
   AigoIntents.swift              Approve / Deny LiveActivityIntent
   AigoPalette.swift              colors (graphite, lime, coral, ice)
+  AigoFonts.swift                bundled fonts, text size, Font.aigo(...)
+  AigoMark.swift                 icon mark + wordmark (also used by the widget)
+  Fonts/                         Share Tech Mono (default), JetBrains Mono, Victor Mono,
+                                 Geist Mono, Ubuntu Sans Mono, IBM Plex Mono (.ttf + licences),
+                                 registered with UIAppFonts in both targets
 Aigo/
   App/       AigoApp (entry), RootView (navigation), NotificationManager
   Model/     Codable mirrors of the host JSON, pairing link parsing, status wording, timeline events
@@ -41,7 +46,8 @@ Aigo/
   Store/     AppStore (state, events, digest, actions), TranscriptModel (chat WS),
              TerminalModel (attach WS), HostVault (Keychain)
   Live/      LiveActivityController, IntentActions (app side of the island buttons)
-  Views/     Home, AttentionCard, SessionRow, Session (Chat | Terminal), NewWork, Pair, QR, Settings
+  Views/     Home (the board: Needs you / Working / Review / Done tabs), AttentionCard + SessionCard,
+             Session (Chat | Terminal | Changes), Search, NewWork, Pair, QR, Settings (Appearance)
 AigoWidgets/       WidgetBundle + Live Activity / Dynamic Island UI
 ```
 

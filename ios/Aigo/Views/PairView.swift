@@ -103,7 +103,7 @@ struct PairView: View {
                 .foregroundStyle(Theme.text)
                 .fixedSize(horizontal: false, vertical: true)
             Text("Aigo shows what every agent on your PC is doing and lets you answer them from here.")
-                .font(.callout)
+                .font(.aigo(.callout))
                 .foregroundStyle(Theme.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -124,7 +124,7 @@ struct PairView: View {
     private func step<Extra: View>(_ n: Int, title: String, text: String, @ViewBuilder extra: () -> Extra) -> some View {
         HStack(alignment: .top, spacing: 14) {
             Text("\(n)")
-                .font(.system(.callout, design: .monospaced).weight(.bold))
+                .font(.aigo(.callout, .bold))
                 .foregroundStyle(Theme.onAccent)
                 .frame(width: 30, height: 30)
                 .background(Theme.lime, in: Circle())
@@ -132,10 +132,10 @@ struct PairView: View {
             VStack(alignment: .leading, spacing: 10) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title)
-                        .font(.headline)
+                        .font(.aigo(.headline))
                         .foregroundStyle(Theme.text)
                     Text(text)
-                        .font(.callout)
+                        .font(.aigo(.callout))
                         .foregroundStyle(Theme.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -194,7 +194,7 @@ struct PairView: View {
             fieldBlock("6-digit code", hint: nil) {
                 TextField("123456", text: $code)
                     .keyboardType(.numberPad)
-                    .font(.system(.title3, design: .monospaced))
+                    .font(.aigo(.title3))
                     .focused($field, equals: .code)
             }
             fieldBlock("Certificate fingerprint", hint: "Aigo trusts only the PC whose certificate matches this fingerprint.") {
@@ -228,11 +228,11 @@ struct PairView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
                 .frame(minHeight: 46)
-                .background(Theme.surface2, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.line, lineWidth: 1))
+                .background(Theme.surface2, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous).strokeBorder(Theme.line, lineWidth: 1))
             if let hint = hint {
                 Text(hint)
-                    .font(.footnote)
+                    .font(.aigo(.footnote))
                     .foregroundStyle(Theme.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -244,7 +244,7 @@ struct PairView: View {
             Image(systemName: "lock.shield")
                 .foregroundStyle(Theme.ice)
             Text("The connection is encrypted and pinned to your PC's certificate. Nothing goes through a cloud service.")
-                .font(.footnote)
+                .font(.aigo(.footnote))
                 .foregroundStyle(Theme.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -257,7 +257,7 @@ struct PairView: View {
             VStack(spacing: 14) {
                 ProgressView().controlSize(.large).tint(Theme.lime)
                 Text(hostName.isEmpty ? "Pairing…" : "Pairing with \(hostName)…")
-                    .font(.headline)
+                    .font(.aigo(.headline))
                     .foregroundStyle(Theme.text)
             }
             .padding(28)

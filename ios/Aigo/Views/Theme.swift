@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Style A ("Lanes"): graphite, lime / coral / ice signals, system sans for
-/// UI text and the monospaced system design for structure and code.
+/// v0.3 style: graphite with lime / coral / ice signals, one monospace font
+/// for all UI (Settings → Appearance), soft tinted buttons, sharp corners.
 enum Theme {
     static let bg = AigoPalette.background
     static let surface = AigoPalette.surface
@@ -20,89 +20,117 @@ enum Theme {
     static let coralLine = AigoPalette.coralLine
     static let onAccent = AigoPalette.onAccent
     static let onCoral = AigoPalette.onCoral
+    static let coralButtonText = AigoPalette.coralButtonText
+    static let iceText = AigoPalette.iceText
+    /// Faint white tint of secondary buttons.
+    static let softWhite = Color.white.opacity(0.05)
+    static let codeBg = Color(aigoHex: 0x08090A)
 
-    // Monospaced structure (scales with Dynamic Type).
-    static let mono = Font.system(.callout, design: .monospaced)
-    static let monoSmall = Font.system(.footnote, design: .monospaced)
-    static let monoCaption = Font.system(.caption, design: .monospaced)
-    static let monoLabel = Font.system(.caption, design: .monospaced).weight(.semibold)
+    // Fonts are computed so a change in Settings → Appearance applies when
+    // the view tree is rebuilt.
+    static var mono: Font { .aigo(.callout) }
+    static var monoSmall: Font { .aigo(.footnote) }
+    static var monoCaption: Font { .aigo(.caption) }
+    static var monoLabel: Font { .aigo(.caption, .semibold) }
+    static var display: Font { .aigo(.title, .semibold) }
+    static var cardTitle: Font { .aigo(.headline, .semibold) }
 
-    // UI text.
-    static let display = Font.system(.title, design: .default).weight(.semibold)
-    static let cardTitle = Font.system(.headline, design: .default)
-
-    static let gutter: CGFloat = 18
-    static let radius: CGFloat = 14
-    static let cardRadius: CGFloat = 16
+    static let gutter: CGFloat = 16
+    /// Buttons.
+    static let radius: CGFloat = 4
+    /// Cards, inputs.
+    static let cardRadius: CGFloat = 6
+    /// Minimum button height on iPhone.
+    static let buttonHeight: CGFloat = 40
 }
 
-/// Lime, full-width, 46pt+ primary button.
-struct FilledButtonStyle: ButtonStyle {
-    var fill: Color = Theme.lime
-    var foreground: Color = Theme.onAccent
+/// Soft button: the colour at about 15% opacity behind coloured text. Used for
+/// primary actions (lime), approvals (coral) and "Looks good" (ice).
+struct SoftButtonStyle: ButtonStyle {
+    var tint: Color = Theme.lime
+    var text: Color? = nil
+    var fullWidth = true
+    var minHeight: CGFloat = Theme.buttonHeight
+    var alignment: Alignment = .center
     @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.body.weight(.bold))
+            .font(.aigo(.callout, .bold))
             .lineLimit(3)
-            .multilineTextAlignment(.center)
+            .multilineTextAlignment(alignment == .leading ? .leading : .center)
             .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .frame(maxWidth: .infinity, minHeight: 46)
-            .background(fill.opacity(isEnabled ? (configuration.isPressed ? 0.75 : 1.0) : 0.35),
-                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .foregroundStyle(foreground)
-            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .padding(.vertical, 8)
+            .frame(maxWidth: fullWidth ? .infinity : nil, minHeight: minHeight, alignment: alignment)
+            .background(tint.opacity(configuration.isPressed ? 0.26 : 0.15),
+                        in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+            .foregroundStyle((text ?? tint).opacity(isEnabled ? 1 : 0.4))
+            .contentShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+            .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
     }
 }
 
-/// Outlined, full-width, 46pt+ secondary button.
-struct OutlineButtonStyle: ButtonStyle {
+/// Secondary button: faint white tint, no border.
+struct SecondaryButtonStyle: ButtonStyle {
     var tint: Color = Theme.text
-    var border: Color = Theme.line
+    var fullWidth = true
+    var minHeight: CGFloat = Theme.buttonHeight
+    var alignment: Alignment = .center
+    var weight: Font.Weight = .regular
     @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.body.weight(.medium))
+            .font(.aigo(.callout, weight))
             .lineLimit(4)
-            .multilineTextAlignment(.center)
+            .multilineTextAlignment(alignment == .leading ? .leading : .center)
             .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .frame(maxWidth: .infinity, minHeight: 46)
-            .background(configuration.isPressed ? Theme.surface2 : Color.clear,
-                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(border, lineWidth: 1))
+            .padding(.vertical, 8)
+            .frame(maxWidth: fullWidth ? .infinity : nil, minHeight: minHeight, alignment: alignment)
+            .background(Color.white.opacity(configuration.isPressed ? 0.11 : 0.05),
+                        in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
             .foregroundStyle(tint.opacity(isEnabled ? 1 : 0.4))
-            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .contentShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+            .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
     }
 }
 
-/// Small capsule button (Stop turn, Resume, Retry).
+/// Former names, kept so older call sites read naturally.
+typealias FilledButtonStyle = SoftButtonStyle
+typealias OutlineButtonStyle = SecondaryButtonStyle
+
+extension SoftButtonStyle {
+    init(fill: Color, foreground: Color) {
+        self.init(tint: fill)
+    }
+}
+
+extension SecondaryButtonStyle {
+    init(tint: Color = Theme.text, border: Color) {
+        self.init(tint: tint)
+    }
+}
+
+/// Small inline button (Stop turn, Resume, Retry).
 struct ChipButtonStyle: ButtonStyle {
-    var fill: Color = Theme.surface2
-    var foreground: Color = Theme.text
+    var tint: Color? = nil
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.footnote.weight(.semibold))
+            .font(.aigo(.footnote, .semibold))
             .lineLimit(1)
-            .padding(.horizontal, 14)
-            .frame(minHeight: 44)
-            .background(fill.opacity(configuration.isPressed ? 0.7 : 1.0), in: Capsule())
-            .foregroundStyle(foreground)
-            .contentShape(Capsule())
+            .padding(.horizontal, 12)
+            .frame(minHeight: Theme.buttonHeight)
+            .background((tint ?? .white).opacity(tint == nil ? (configuration.isPressed ? 0.11 : 0.05)
+                                                             : (configuration.isPressed ? 0.26 : 0.15)),
+                        in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+            .foregroundStyle(tint ?? Theme.text)
+            .contentShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
     }
 }
 
 extension View {
-    /// Standard card frame.
+    /// Standard card frame (6 pt corners, 1 pt border).
     func aigoCard(border: Color = Theme.line, fill: Color = Theme.surface) -> some View {
         self
             .background(fill, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))

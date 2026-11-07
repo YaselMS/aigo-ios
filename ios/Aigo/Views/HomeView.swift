@@ -1,60 +1,63 @@
 import SwiftUI
 import UIKit
 
-/// Home: status sentence → Needs you (card stack) → Since you left (digest)
-/// → Everyone (all sessions).
+/// Home = the board as four tabs with counts: Needs you / Working / Review /
+/// Done. Needs-you cards are answered inline; Review cards have "Looks good";
+/// every card opens its conversation. "New work" sits at the bottom.
 struct HomeView: View {
     @EnvironmentObject private var store: AppStore
-    @State private var showAllEvents = false
+    @State private var tab: BoardColumn = .ask
+    @State private var pickedInitialTab = false
     @State private var killing: SessionInfo?
     @State private var removing: SessionInfo?
     @State private var banner: String?
 
-    private static let collapsedEvents = 6
-
     var body: some View {
-        List {
-            statusBlock
-                .homeRow(top: 8, bottom: 6)
-
-            if let problem = store.connectionProblem {
-                ConnectionProblemCard(problem: problem)
-                    .homeRow(top: 4, bottom: 8)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+        let board = store.board
+        let cards = board[tab] ?? []
+        VStack(spacing: 0) {
+            header(board)
+            ScrollView {
+                LazyVStack(spacing: 10) {
+                    if let problem = store.connectionProblem {
+                        ConnectionProblemCard(problem: problem)
+                            .transition(.opacity)
+                    }
+                    if let banner = banner {
+                        InlineBanner(text: banner) { self.banner = nil }
+                    }
+                    if !store.hasSnapshot && store.connectionProblem == nil {
+                        SkeletonRows(count: 3)
+                    } else if store.sessions.isEmpty && store.pendingItems.isEmpty && tab != .done {
+                        emptyState
+                    } else if cards.isEmpty {
+                        Text(tab.emptyText)
+                            .font(.aigo(.callout))
+                            .foregroundStyle(Theme.secondary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 40)
+                    } else {
+                        ForEach(cards) { card in
+                            cardView(card)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
+                    }
+                }
+                .padding(.horizontal, Theme.gutter)
+                .padding(.top, 8)
+                .padding(.bottom, 16)
+                .animation(.easeInOut(duration: 0.25), value: cards.map { $0.id })
             }
-
-            if let banner = banner {
-                InlineBanner(text: banner) { self.banner = nil }
-                    .homeRow(top: 4, bottom: 8)
+            .refreshable {
+                await store.refresh()
             }
-
-            let pending = store.pendingItems
-            if !pending.isEmpty {
-                NeedsYouStack(items: pending)
-                    .homeRow(top: 14, bottom: 6)
-            }
-
-            digest
-
-            everyone
+            newWorkButton
         }
-        .listStyle(.plain)
-        .environment(\.defaultMinListRowHeight, 0)
-        .scrollContentBackground(.hidden)
         .background(Theme.bg.ignoresSafeArea())
-        .safeAreaInset(edge: .top, spacing: 0) {
-            header
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            dispatchBar
-        }
         .toolbar(.hidden, for: .navigationBar)
-        .navigationTitle("Home")
-        .refreshable {
-            await store.refresh()
-        }
-        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: store.pendingItems.map { $0.id })
-        .animation(.easeInOut(duration: 0.25), value: store.sortedSessions.map { $0.id })
+        .navigationTitle("Board")
+        .onAppear { pickInitialTab(board) }
+        .onChange(of: store.hasSnapshot) { _, _ in pickInitialTab(store.board) }
         .confirmationDialog("Kill this session?",
                             isPresented: Binding(get: { killing != nil }, set: { if !$0 { killing = nil } }),
                             titleVisibility: .visible,
@@ -77,190 +80,113 @@ struct HomeView: View {
         }
     }
 
+    /// Opens on Needs you when something waits, else on the busiest column.
+    private func pickInitialTab(_ board: [BoardColumn: [BoardCard]]) {
+        guard !pickedInitialTab, store.hasSnapshot else { return }
+        pickedInitialTab = true
+        tab = BoardColumn.allCases.first { !(board[$0] ?? []).isEmpty } ?? .ask
+    }
+
     // MARK: - Header
 
-    private var header: some View {
-        HStack(spacing: 6) {
-            Wordmark()
-                .layoutPriority(2)
-            Spacer(minLength: 8)
-            HostSwitcher()
-                .layoutPriority(1)
-            Button {
-                store.path.append(.settings)
-            } label: {
-                Image(systemName: "gearshape")
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(Theme.text)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
+    private func header(_ board: [BoardColumn: [BoardCard]]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                AigoWordmark(size: 17)
+                Spacer(minLength: 8)
+                HostSwitcher()
+                    .layoutPriority(1)
+                iconButton("magnifyingglass", label: "Search") {
+                    store.showSearch = true
+                }
+                iconButton("gearshape", label: "Settings") {
+                    store.path.append(.settings)
+                }
             }
-            .accessibilityLabel(Text("Settings"))
-            Button {
-                Haptics.tap()
-                store.openNewWork()
-            } label: {
-                Image(systemName: "plus")
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(Theme.lime)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .accessibilityLabel(Text("Start new work"))
-            .disabled(store.client == nil)
-        }
-        .padding(.leading, Theme.gutter)
-        .padding(.trailing, 8)
-        .padding(.vertical, 2)
-        .background(Theme.bg.opacity(0.97).ignoresSafeArea(edges: .top))
-    }
-
-    private var statusBlock: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(store.statusSentence)
-                .font(Theme.display)
+            Text(headline(board))
+                .font(.aigo(.title, .semibold))
                 .foregroundStyle(Theme.text)
-                .fixedSize(horizontal: false, vertical: true)
-                .contentTransition(.opacity)
-                .animation(.easeInOut(duration: 0.25), value: store.statusSentence)
-            Text(statusDetail)
-                .font(Theme.monoCaption)
-                .foregroundStyle(Theme.secondary)
                 .lineLimit(2)
+                .minimumScaleFactor(0.8)
+                .contentTransition(.opacity)
+                .accessibilityAddTraits(.isHeader)
+            tabs(board)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .combine)
+        .padding(.horizontal, 18)
+        .padding(.top, 6)
+        .padding(.bottom, 8)
+        .background(Theme.bg)
     }
 
-    private var statusDetail: String {
-        var parts = [store.hostLabel, store.connection.label]
-        let n = store.sessions.count
-        if store.hasSnapshot {
-            parts.append(n == 1 ? "1 session" : "\(n) sessions")
+    private func headline(_ board: [BoardColumn: [BoardCard]]) -> String {
+        if store.activeHost == nil { return "Pair your PC to get started." }
+        if !store.hasSnapshot {
+            return store.connectionProblem != nil ? "Can't reach \(store.hostLabel)" : "Connecting to \(store.hostLabel)…"
         }
-        return parts.joined(separator: " · ")
+        let ask = board[.ask]?.count ?? 0
+        let work = board[.work]?.count ?? 0
+        return (ask > 0 ? "\(ask) need you" : "All clear") + " · \(work) working"
     }
 
-    // MARK: - Since you left
+    private func iconButton(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(Theme.text)
+                .frame(width: 36, height: 36)
+                .background(Theme.softWhite, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+                .frame(width: 40, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text(label))
+    }
 
-    @ViewBuilder
-    private var digest: some View {
-        let events = store.timeline
-        if !events.isEmpty {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text("Since you left")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(Theme.text)
-                if let left = store.lastLeftAt {
-                    Text(Clock.ago(left))
-                        .font(.title3)
-                        .foregroundStyle(Theme.secondary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 0)
-            }
-            .accessibilityAddTraits(.isHeader)
-            .homeRow(top: 22, bottom: 12)
-
-            let shown = showAllEvents ? Array(events.prefix(40)) : Array(events.prefix(HomeView.collapsedEvents))
-            ForEach(Array(shown.enumerated()), id: \.element.id) { pair in
-                TimelineRow(event: pair.element,
-                            isLast: pair.offset == shown.count - 1,
-                            canOpen: pair.element.sessionId.flatMap { store.session(id: $0) } != nil) {
-                    if let sid = pair.element.sessionId {
-                        store.openSession(sid)
+    private func tabs(_ board: [BoardColumn: [BoardCard]]) -> some View {
+        HStack(spacing: 6) {
+            ForEach(BoardColumn.allCases) { col in
+                let count = board[col]?.count ?? 0
+                let on = col == tab
+                let alert = col == .ask && count > 0
+                Button {
+                    Haptics.selection()
+                    withAnimation(.easeInOut(duration: 0.15)) { tab = col }
+                } label: {
+                    VStack(spacing: 2) {
+                        Text("\(count)")
+                            .font(.aigo(size: 15, .semibold))
+                            .foregroundStyle(alert ? Theme.coral : (on ? Theme.bg : Theme.text))
+                            .contentTransition(.numericText())
+                        Text(col.label)
+                            .font(.aigo(size: 11))
+                            .foregroundStyle(on ? Theme.bg : Theme.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
                     }
-                }
-                .homeRow(top: 0, bottom: 0)
-            }
-
-            if events.count > HomeView.collapsedEvents {
-                Button {
-                    Haptics.tap()
-                    withAnimation(.easeInOut(duration: 0.25)) { showAllEvents.toggle() }
-                } label: {
-                    Text(showAllEvents ? "Show less" : "Show \(min(events.count, 40) - HomeView.collapsedEvents) more")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(Theme.lime)
-                        .frame(minHeight: 44)
-                        .padding(.leading, 26)
-                        .contentShape(Rectangle())
+                    .frame(maxWidth: .infinity, minHeight: 50)
+                    .background(on ? Theme.text : Theme.surface,
+                                in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
+                        .strokeBorder(on ? Color.clear : (alert ? Color(aigoHex: 0x5A3A30) : Theme.line), lineWidth: 1))
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .homeRow(top: 0, bottom: 0)
+                .accessibilityLabel(Text("\(col.label), \(count)"))
+                .accessibilityAddTraits(on ? [.isSelected, .isButton] : .isButton)
             }
         }
     }
 
-    // MARK: - Everyone
+    // MARK: - Cards
 
     @ViewBuilder
-    private var everyone: some View {
-        SectionHeader(title: "Everyone", count: store.sessions.isEmpty ? nil : store.sessions.count)
-            .homeRow(top: 24, bottom: 2)
-
-        if !store.hasSnapshot && store.connectionProblem == nil {
-            SkeletonRows(count: 3)
-                .homeRow(top: 0, bottom: 0)
-        } else if store.sessions.isEmpty {
-            emptyState
-                .homeRow(top: 8, bottom: 24)
-        } else {
-            ForEach(store.sortedSessions) { session in
-                Button {
-                    store.openSession(session.id)
-                } label: {
-                    SessionRow(session: session, activity: store.activity[session.id] ?? [])
-                }
-                .buttonStyle(.plain)
-                .listRowInsets(EdgeInsets(top: 0, leading: Theme.gutter, bottom: 0, trailing: Theme.gutter))
-                .listRowBackground(Theme.bg)
-                .listRowSeparatorTint(Theme.lineSoft)
-                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                    swipeButtons(session)
-                }
-                .contextMenu {
-                    contextButtons(session)
-                }
-            }
-            Color.clear
-                .frame(height: 24)
-                .homeRow(top: 0, bottom: 0)
-        }
-    }
-
-    @ViewBuilder
-    private func swipeButtons(_ s: SessionInfo) -> some View {
-        if s.isRunning {
-            Button {
-                killing = s
-            } label: {
-                Label("Kill", systemImage: "xmark.octagon")
-            }
-            .tint(Theme.coral)
-            if s.status == .working || s.status == .stalled || s.status == .needsYou {
-                Button {
-                    Haptics.tap()
-                    act { await store.interrupt(s.id) }
-                } label: {
-                    Label("Stop", systemImage: "stop.fill")
-                }
-                .tint(Color(aigoHex: 0x3A3F47))
-            }
-        } else {
-            Button {
-                removing = s
-            } label: {
-                Label("Remove", systemImage: "trash")
-            }
-            .tint(Theme.coral)
-            Button {
-                Haptics.tap()
-                act { await store.restart(s.id) }
-            } label: {
-                Label(s.isAgent ? "Resume" : "Restart", systemImage: "arrow.clockwise")
-            }
-            .tint(Color(aigoHex: 0x4A5A14))
+    private func cardView(_ card: BoardCard) -> some View {
+        if let item = card.item {
+            AttentionCard(item: item, session: card.session)
+                .contextMenu { if let s = card.session { contextButtons(s) } }
+        } else if let s = card.session {
+            SessionCard(session: s, column: card.column, onError: { banner = $0 })
+                .contextMenu { contextButtons(s) }
         }
     }
 
@@ -305,90 +231,48 @@ struct HomeView: View {
     }
 
     private var emptyState: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 10) {
-                Circle()
-                    .fill(Theme.lime)
-                    .frame(width: 12, height: 12)
-                    .shadow(color: Theme.lime.opacity(0.7), radius: 8)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Circle().fill(Theme.lime).frame(width: 8, height: 8)
                 Text("Ready when you are")
-                    .font(Theme.monoLabel)
-                    .tracking(0.8)
+                    .font(.aigo(.caption, .semibold))
                     .foregroundStyle(Theme.lime)
             }
             Text("Nothing is running on \(store.hostLabel).")
-                .font(.title3.weight(.semibold))
+                .font(.aigo(.title3, .semibold))
                 .foregroundStyle(Theme.text)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("Start an agent in one of your projects. Its progress shows up here, and anything it needs from you lands on top.")
-                .font(.callout)
+            Text("Start an agent in one of your projects. Its progress shows up here, and anything it needs from you lands in Needs you.")
+                .font(.aigo(.footnote))
                 .foregroundStyle(Theme.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Button {
                 Haptics.tap()
-                store.openNewWork(agent: codexInstalled ? "codex" : nil)
-            } label: {
-                Label(codexInstalled ? "Start Codex in a project" : "Start an agent in a project", systemImage: "sparkles")
-            }
-            .buttonStyle(FilledButtonStyle())
-            .disabled(store.client == nil)
-            Button {
                 store.openNewWork(agent: NewWorkView.terminalChoice)
             } label: {
                 Label("Open a terminal", systemImage: "terminal")
             }
-            .buttonStyle(OutlineButtonStyle())
+            .buttonStyle(SecondaryButtonStyle())
             .disabled(store.client == nil)
         }
-        .padding(16)
+        .padding(12)
         .aigoCard()
     }
 
-    private var codexInstalled: Bool {
-        if let codex = store.agents.first(where: { $0.id == "codex" }) {
-            return codex.installed
-        }
-        return store.agents.isEmpty
-    }
-
-    /// "› Start work…" bar, like the dispatch bar on the desktop.
-    private var dispatchBar: some View {
+    private var newWorkButton: some View {
         Button {
             Haptics.tap()
             store.openNewWork()
         } label: {
-            HStack(spacing: 10) {
-                Text("›")
-                    .font(.system(.title3, design: .monospaced).weight(.bold))
-                    .foregroundStyle(Theme.lime)
-                Text("Start work…")
-                    .foregroundStyle(Theme.secondary)
-                    .lineLimit(1)
-                Spacer(minLength: 8)
-                Text("Go")
-                    .font(.body.weight(.bold))
-                    .foregroundStyle(Theme.onAccent)
-                    .padding(.horizontal, 16)
-                    .frame(minHeight: 40)
-                    .background(Theme.lime, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-            }
-            .padding(.leading, 14)
-            .padding(.trailing, 5)
-            .padding(.vertical, 5)
-            .background(Color(aigoHex: 0x101215), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color(aigoHex: 0x2B2F35), lineWidth: 1))
-            .contentShape(Rectangle())
+            Text("New work")
         }
-        .buttonStyle(.plain)
+        .buttonStyle(SoftButtonStyle(tint: Theme.lime, minHeight: 46))
         .disabled(store.client == nil)
         .accessibilityLabel(Text("Start new work"))
-        .padding(.horizontal, 12)
+        .padding(.horizontal, Theme.gutter)
         .padding(.top, 8)
-        .padding(.bottom, 6)
-        .background(
-            LinearGradient(colors: [Theme.bg.opacity(0), Theme.bg, Theme.bg], startPoint: .top, endPoint: .bottom)
-                .ignoresSafeArea(edges: .bottom)
-        )
+        .padding(.bottom, 8)
+        .background(Theme.bg.ignoresSafeArea(edges: .bottom))
     }
 
     private func act(_ op: @escaping () async -> String?) {
@@ -398,81 +282,5 @@ struct HomeView: View {
                 withAnimation { banner = err }
             }
         }
-    }
-}
-
-/// One entry of the "Since you left" timeline (rail + dot + text).
-struct TimelineRow: View {
-    let event: TimelineEvent
-    let isLast: Bool
-    let canOpen: Bool
-    let onOpen: () -> Void
-
-    var body: some View {
-        Button {
-            if canOpen { onOpen() }
-        } label: {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("\(Clock.short(event.date)) · \(event.lane)")
-                    .font(Theme.monoCaption)
-                    .foregroundStyle(Theme.secondary)
-                    .lineLimit(1)
-                Text(event.text)
-                    .font(event.kind == .needsYou ? .callout.weight(.semibold) : .callout)
-                    .foregroundStyle(event.kind == .needsYou ? Theme.coralText : Theme.text)
-                    .lineLimit(3)
-                    .fixedSize(horizontal: false, vertical: true)
-                if let detail = event.detail, !detail.isEmpty {
-                    Text(detail)
-                        .font(.footnote)
-                        .foregroundStyle(Theme.secondary)
-                        .lineLimit(3)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                if canOpen {
-                    Text("Open lane →")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(Theme.lime)
-                        .padding(.top, 1)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.leading, 26)
-            .padding(.bottom, 16)
-            .frame(minHeight: 44, alignment: .top)
-            .background(alignment: .topLeading) { rail }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityElement(children: .combine)
-    }
-
-    private var rail: some View {
-        VStack(spacing: 2) {
-            Circle()
-                .fill(event.color)
-                .frame(width: 12, height: 12)
-                .background(Circle().fill(event.kind == .needsYou ? Theme.coral.opacity(0.2) : .clear).frame(width: 20, height: 20))
-                .padding(.top, 2)
-            if !isLast {
-                Rectangle()
-                    .fill(Theme.lineSoft)
-                    .frame(width: 2)
-                    .frame(maxHeight: .infinity)
-            } else {
-                Spacer(minLength: 0)
-            }
-        }
-        .frame(width: 14)
-    }
-}
-
-extension View {
-    /// Full-width Home list row on the graphite background without separators.
-    func homeRow(top: CGFloat, bottom: CGFloat) -> some View {
-        self
-            .listRowInsets(EdgeInsets(top: top, leading: Theme.gutter, bottom: bottom, trailing: Theme.gutter))
-            .listRowBackground(Theme.bg)
-            .listRowSeparator(.hidden)
     }
 }

@@ -20,26 +20,13 @@ struct StatusDot: View {
     }
 }
 
-/// Lowercase monospaced "aigo" with a glowing lime dot. Never truncates.
+/// Lowercase "aigo" with a lime dot, in the app font.
 struct Wordmark: View {
-    var size: CGFloat = 21
+    var size: CGFloat = 17
 
     var body: some View {
-        HStack(alignment: .lastTextBaseline, spacing: 2) {
-            Text("aigo")
-                .font(.system(size: size, weight: .bold, design: .monospaced))
-                .tracking(-0.8)
-                .foregroundStyle(Theme.text)
-            Circle()
-                .fill(Theme.lime)
-                .frame(width: size * 0.34, height: size * 0.34)
-                .shadow(color: Theme.lime.opacity(0.6), radius: 5)
-                .padding(.bottom, size * 0.14)
-        }
-        .fixedSize()
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text("Aigo"))
-        .accessibilityAddTraits(.isHeader)
+        AigoWordmark(size: size)
+            .accessibilityAddTraits(.isHeader)
     }
 }
 
@@ -104,22 +91,22 @@ struct HostSwitcher: View {
                 }
             }
         } label: {
-            HStack(spacing: 7) {
+            HStack(spacing: 6) {
                 Circle()
                     .fill(store.connection.dotColor)
                     .frame(width: 7, height: 7)
                 Text(store.hostLabel)
-                    .font(Theme.monoCaption)
+                    .font(.aigo(size: 12.5))
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                Image(systemName: "chevron.down")
-                    .font(.caption2.weight(.semibold))
+                Text("▾")
+                    .font(.aigo(size: 12.5))
                     .foregroundStyle(Theme.secondary)
             }
-            .padding(.horizontal, 10)
-            .frame(minHeight: 32)
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Theme.line, lineWidth: 1))
+            .padding(.horizontal, 12)
+            .frame(minHeight: 36)
+            .background(Theme.softWhite, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
             .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
@@ -168,14 +155,14 @@ struct InlineBanner: View {
                 .foregroundStyle(tint)
                 .padding(.top, 2)
             Text(text)
-                .font(.footnote)
+                .font(.aigo(.footnote))
                 .foregroundStyle(Theme.text)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
             if let onClose = onClose {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
-                        .font(.footnote.weight(.semibold))
+                        .font(.aigo(.footnote, .semibold))
                         .foregroundStyle(Theme.secondary)
                         .frame(width: 44, height: 44)
                 }
@@ -185,8 +172,8 @@ struct InlineBanner: View {
         .padding(.leading, 12)
         .padding(.vertical, onClose == nil ? 10 : 0)
         .padding(.trailing, onClose == nil ? 12 : 0)
-        .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(tint.opacity(0.35), lineWidth: 1))
+        .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous).strokeBorder(tint.opacity(0.35), lineWidth: 1))
     }
 }
 
@@ -210,7 +197,7 @@ struct ConnectionProblemCard: View {
                 }
             }
             Text(problem.message)
-                .font(.callout)
+                .font(.aigo(.callout))
                 .foregroundStyle(Theme.text)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 10) {
@@ -218,7 +205,7 @@ struct ConnectionProblemCard: View {
                     Button("Pair again") {
                         store.repairActiveHost()
                     }
-                    .buttonStyle(FilledButtonStyle(fill: Theme.coral, foreground: Theme.onCoral))
+                    .buttonStyle(SoftButtonStyle(tint: Theme.coral, text: Theme.coralButtonText))
                 }
                 Button {
                     Haptics.tap()

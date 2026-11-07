@@ -3,95 +3,103 @@ import AppIntents
 import SwiftUI
 import WidgetKit
 
-/// Lock Screen banner + Dynamic Island for the Aigo Live Activity.
-/// Tapping anywhere opens the app at Home (aigo://home).
+/// Lock Screen card + Dynamic Island for the Aigo Live Activity (v0.3).
+/// Compact: the icon and two counts (coral = needs you, lime = working).
+/// Expanded / Lock Screen: the first needs-you item with Approve / Deny.
+/// Tapping elsewhere opens the board (aigo://home).
 struct AigoLiveActivityWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: AigoActivityAttributes.self) { context in
             AigoLockScreenView(state: context.state,
                                hostName: context.attributes.hostName,
                                isStale: context.isStale)
-                .activityBackgroundTint(AigoPalette.background)
+                .activityBackgroundTint(AigoPalette.background.opacity(0.94))
                 .activitySystemActionForegroundColor(AigoPalette.text)
                 .widgetURL(URL(string: "aigo://home"))
         } dynamicIsland: { context in
-            DynamicIsland {
+            let state = context.state
+            let look = state.appearance
+            return DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    HStack(spacing: 6) {
-                        AigoSignalDot(needsYou: context.state.needsYou > 0, size: 10)
-                        Text("aigo")
-                            .font(.system(.headline, design: .monospaced).weight(.bold))
-                            .foregroundStyle(AigoPalette.text)
-                    }
-                    .padding(.leading, 4)
+                    AigoWordmark(size: 14, appearance: look)
+                        .padding(.leading, 6)
+                        .padding(.top, 2)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    Text(AigoActivityText.summary(context.state))
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(context.state.needsYou > 0 ? AigoPalette.coral : AigoPalette.lime)
-                        .padding(.trailing, 4)
+                    AigoCounts(state: state, appearance: look, fontSize: 13)
+                        .padding(.trailing, 6)
+                        .padding(.top, 2)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(context.state.headline)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(AigoPalette.text)
-                            .lineLimit(1)
-                        if !context.state.detail.isEmpty {
-                            Text(context.state.detail)
-                                .font(.caption)
-                                .foregroundStyle(AigoPalette.secondary)
-                                .lineLimit(2)
-                        }
-                        if !context.state.actionId.isEmpty {
-                            AigoDecisionButtons(actionId: context.state.actionId, height: 40)
-                                .padding(.top, 6)
-                        } else {
-                            Text(context.attributes.hostName)
-                                .font(.caption2)
-                                .foregroundStyle(AigoPalette.secondary)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 4)
+                    AigoActivityCard(state: state, hostName: context.attributes.hostName, appearance: look,
+                                     buttonHeight: 40)
+                        .padding(.top, 4)
                 }
             } compactLeading: {
-                AigoSignalDot(needsYou: context.state.needsYou > 0, size: 10)
+                AigoIconMark(size: 20, appearance: look)
             } compactTrailing: {
-                Text(AigoActivityText.compact(context.state))
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(context.state.needsYou > 0 ? AigoPalette.coral : AigoPalette.lime)
+                AigoCounts(state: state, appearance: look, fontSize: 12)
             } minimal: {
-                AigoSignalDot(needsYou: context.state.needsYou > 0, size: 10)
+                AigoMinimalCount(state: state, appearance: look)
             }
             .widgetURL(URL(string: "aigo://home"))
-            .keylineTint(context.state.needsYou > 0 ? AigoPalette.coral : AigoPalette.lime)
+            .keylineTint(state.needsYou > 0 ? AigoPalette.coral : AigoPalette.lime)
         }
     }
 }
 
-struct AigoSignalDot: View {
-    let needsYou: Bool
-    var size: CGFloat = 10
+/// "● 2  ● 3": coral needs-you count, lime working count (zeros hidden,
+/// except a lone 0 working when nothing else is shown).
+struct AigoCounts: View {
+    let state: AigoActivityAttributes.ContentState
+    let appearance: AigoAppearance
+    var fontSize: CGFloat = 12
 
     var body: some View {
-        Circle()
-            .fill(needsYou ? AigoPalette.coral : AigoPalette.lime)
-            .frame(width: size, height: size)
+        HStack(spacing: 8) {
+            if state.needsYou > 0 {
+                count(state.needsYou, dot: AigoPalette.coral, text: AigoPalette.coralText)
+            }
+            if state.working > 0 || state.needsYou == 0 {
+                count(state.working, dot: AigoPalette.lime, text: AigoPalette.lime)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(AigoActivityText.summary(state)))
+    }
+
+    private func count(_ n: Int, dot: Color, text: Color) -> some View {
+        HStack(spacing: 4) {
+            Circle().fill(dot).frame(width: 7, height: 7)
+            Text("\(n)")
+                .font(.custom(appearance.family.postScriptName(.semibold), fixedSize: fontSize))
+                .foregroundStyle(text)
+                .monospacedDigit()
+        }
+    }
+}
+
+struct AigoMinimalCount: View {
+    let state: AigoActivityAttributes.ContentState
+    let appearance: AigoAppearance
+
+    var body: some View {
+        let needs = state.needsYou > 0
+        HStack(spacing: 3) {
+            Circle().fill(needs ? AigoPalette.coral : AigoPalette.lime).frame(width: 6, height: 6)
+            Text("\(needs ? state.needsYou : state.working)")
+                .font(.custom(appearance.family.postScriptName(.semibold), fixedSize: 12))
+                .foregroundStyle(needs ? AigoPalette.coralText : AigoPalette.lime)
+        }
     }
 }
 
 enum AigoActivityText {
-    static func compact(_ s: AigoActivityAttributes.ContentState) -> String {
-        if s.needsYou > 0 { return "needs you" }
-        return "\(s.working) working"
-    }
-
     static func summary(_ s: AigoActivityAttributes.ContentState) -> String {
         var parts: [String] = []
         if s.needsYou > 0 { parts.append("\(s.needsYou) need you") }
         if s.working > 0 { parts.append("\(s.working) working") }
-        return parts.isEmpty ? "all quiet" : parts.joined(separator: " · ")
+        return parts.isEmpty ? "all clear" : parts.joined(separator: " · ")
     }
 }
 
@@ -101,48 +109,80 @@ struct AigoLockScreenView: View {
     let isStale: Bool
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            AigoSignalDot(needsYou: state.needsYou > 0, size: 12)
-                .padding(.top, 4)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("aigo")
-                        .font(.system(.subheadline, design: .monospaced).weight(.bold))
-                        .foregroundStyle(AigoPalette.text)
-                    Text(hostName)
-                        .font(.caption)
-                        .foregroundStyle(AigoPalette.secondary)
-                        .lineLimit(1)
-                    Spacer()
-                    Text(AigoActivityText.summary(state))
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(state.needsYou > 0 ? AigoPalette.coral : AigoPalette.lime)
-                }
-                if !state.headline.isEmpty {
-                    Text(state.headline)
-                        .font(.headline)
-                        .foregroundStyle(AigoPalette.text)
-                        .lineLimit(1)
-                }
-                if !state.detail.isEmpty {
-                    Text(state.detail)
-                        .font(.footnote)
-                        .foregroundStyle(AigoPalette.secondary)
-                        .lineLimit(2)
-                }
-                if !state.actionId.isEmpty {
-                    AigoDecisionButtons(actionId: state.actionId, height: 44)
-                        .padding(.top, 4)
-                }
-                HStack(spacing: 4) {
-                    Text(isStale ? "Last update" : "Updated")
+        let look = state.appearance
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                AigoWordmark(size: 13, appearance: look)
+                Text(hostName.isEmpty ? AigoActivityText.summary(state)
+                                      : "\(hostName) · \(AigoActivityText.summary(state))")
+                    .font(look.font(size: 12))
+                    .foregroundStyle(AigoPalette.secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                if isStale {
                     Text(state.updatedAt, style: .time)
+                        .font(look.font(size: 11))
+                        .foregroundStyle(AigoPalette.secondary.opacity(0.8))
                 }
-                .font(.caption2)
-                .foregroundStyle(AigoPalette.secondary.opacity(0.8))
+            }
+            AigoActivityCard(state: state, hostName: hostName, appearance: look, buttonHeight: 40)
+        }
+        .padding(10)
+    }
+}
+
+/// The first needs-you item (coral card with Approve / Deny), or the busiest
+/// working session.
+struct AigoActivityCard: View {
+    let state: AigoActivityAttributes.ContentState
+    let hostName: String
+    let appearance: AigoAppearance
+    var buttonHeight: CGFloat = 40
+
+    var body: some View {
+        let needs = state.needsYou > 0
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                if !needs {
+                    Circle().fill(AigoPalette.lime).frame(width: 7, height: 7)
+                }
+                Text(state.headline.isEmpty ? (needs ? "An agent needs you" : "Working") : state.headline)
+                    .font(appearance.font(size: 13, .semibold))
+                    .foregroundStyle(AigoPalette.text)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                if needs && state.needsYou > 1 {
+                    Text("1 of \(state.needsYou)")
+                        .font(appearance.font(size: 11))
+                        .foregroundStyle(AigoPalette.secondary)
+                }
+            }
+            if !state.context.isEmpty {
+                Text(state.context)
+                    .font(appearance.font(size: 11))
+                    .foregroundStyle(AigoPalette.secondary)
+                    .lineLimit(1)
+            }
+            if !state.detail.isEmpty {
+                Text(state.detail)
+                    .font(appearance.font(size: 11))
+                    .foregroundStyle(needs ? AigoPalette.coralText : AigoPalette.secondary)
+                    .lineLimit(2)
+            }
+            if !state.actionId.isEmpty {
+                AigoDecisionButtons(actionId: state.actionId, appearance: appearance, height: buttonHeight)
+            } else if needs {
+                Text("Open Aigo to answer")
+                    .font(appearance.font(size: 11))
+                    .foregroundStyle(AigoPalette.secondary)
             }
         }
-        .padding(14)
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(needs ? AigoPalette.coralWash : AigoPalette.surface,
+                    in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .strokeBorder(needs ? AigoPalette.coral : AigoPalette.line, lineWidth: 1))
     }
 }
 
@@ -150,23 +190,24 @@ struct AigoLockScreenView: View {
 /// Shown only for plain, non-destructive approvals (the app decides).
 struct AigoDecisionButtons: View {
     let actionId: String
-    var height: CGFloat = 44
+    let appearance: AigoAppearance
+    var height: CGFloat = 40
 
     var body: some View {
         HStack(spacing: 8) {
             Button(intent: DecideApprovalIntent(actionId: actionId, approve: true)) {
                 Text("Approve")
-                    .font(.subheadline.weight(.bold))
+                    .font(appearance.font(size: 13, .bold))
                     .frame(maxWidth: .infinity, minHeight: height)
-                    .background(AigoPalette.coral, in: Capsule())
-                    .foregroundStyle(AigoPalette.onCoral)
+                    .background(AigoPalette.coral.opacity(0.15), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                    .foregroundStyle(AigoPalette.coralButtonText)
             }
             .buttonStyle(.plain)
             Button(intent: DecideApprovalIntent(actionId: actionId, approve: false)) {
                 Text("Deny")
-                    .font(.subheadline.weight(.medium))
+                    .font(appearance.font(size: 13))
                     .frame(maxWidth: .infinity, minHeight: height)
-                    .overlay(Capsule().strokeBorder(AigoPalette.coralLine, lineWidth: 1))
+                    .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
                     .foregroundStyle(AigoPalette.text)
             }
             .buttonStyle(.plain)
