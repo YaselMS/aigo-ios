@@ -62,7 +62,7 @@ final class AppearanceStore: ObservableObject {
 
 /// Lets the system back-swipe work on screens that hide the navigation bar
 /// (Home, Conversation draw their own headers).
-extension UINavigationController: UIGestureRecognizerDelegate {
+extension UINavigationController: @retroactive UIGestureRecognizerDelegate {
     override open func viewDidLoad() {
         super.viewDidLoad()
         interactivePopGestureRecognizer?.delegate = self

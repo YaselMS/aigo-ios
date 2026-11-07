@@ -235,20 +235,3 @@ extension SessionInfo {
         return fields.contains { ($0 ?? "").localizedCaseInsensitiveContains(query) }
     }
 }
-
-/// One card on the board: a pending approval/question, or a session.
-struct BoardCard: Identifiable, Equatable {
-    let id: String
-    let column: BoardColumn
-    let item: InboxItem?
-    let session: SessionInfo?
-    let date: Date?
-}
-
-extension SessionInfo {
-    /// Case-insensitive match on what a person would search for.
-    func matches(_ query: String) -> Bool {
-        let fields = [title, convTitle, lastPrompt, cwd, agent, AgentNames.display(agent), model]
-        return fields.contains { ($0 ?? "").localizedCaseInsensitiveContains(query) }
-    }
-}
