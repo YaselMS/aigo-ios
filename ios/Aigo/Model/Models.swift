@@ -36,7 +36,62 @@ struct SessionInfo: Codable, Identifiable, Equatable {
     var board: String?         // ask | work | review | done | "" (off the board)
     var lastActivity: String?
     var seenAt: String?
+    var finishedAt: String?
     var external: Bool?
+}
+
+/// agentevents.External: an agent started outside Aigo, known from its hooks
+/// (snapshot `external`, `external.updated` events, GET /api/v1/external).
+struct ExternalSession: Codable, Identifiable, Equatable {
+    var key: String
+    var agent: String?
+    var agentSessionId: String?
+    var cwd: String?
+    var transcriptPath: String?
+    var status: String?        // working | blocked | done | idle | exited ...
+    var statusChangedAt: String?
+    var lastPrompt: String?
+    var model: String?
+    var updatedAt: String?
+    var ended: Bool?
+    var external: Bool?
+    var title: String?
+    var board: String?         // ask | work | "" (v0.3 hosts)
+    var lastActivity: String?
+    var stale: Bool?
+    var id: String { key }
+}
+
+/// One result of GET /api/v1/search (v0.3 host).
+struct SearchItem: Codable, Identifiable, Equatable {
+    var kind: String?          // session | external | history
+    var id: String
+    var agent: String?
+    var agentSessionId: String?
+    var title: String?
+    var cwd: String?
+    var project: String?
+    var lastPrompt: String?
+    var lastMessage: String?
+    var status: String?
+    var board: String?
+    var lastActivity: String?
+    var external: Bool?
+    var transcript: String?
+}
+
+struct SearchResponse: Codable {
+    var items: [SearchItem]?
+    var nextOffset: Int?
+    var total: Int?
+}
+
+/// Counts of the board (snapshot `board`, `board.updated` events).
+struct BoardCounts: Codable, Equatable {
+    var ask: Int?
+    var work: Int?
+    var review: Int?
+    var done: Int?
 }
 
 /// inbox.Item (internal/inbox/inbox.go).
@@ -175,6 +230,8 @@ struct Snapshot: Codable {
     var sessions: [SessionInfo]?
     var inbox: [InboxItem]?
     var notifications: [HostNotice]?
+    var external: [ExternalSession]?
+    var board: BoardCounts?
 }
 
 /// notify.Notification (internal/notify/notify.go), data of `notify` events.

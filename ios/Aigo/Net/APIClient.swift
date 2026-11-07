@@ -258,10 +258,14 @@ final class APIClient: @unchecked Sendable {
         try await get("/api/v1/sessions", as: [SessionInfo].self)
     }
 
-    /// Search (v0.3 host): titles, prompts and older or outside-Aigo chats.
-    /// Older hosts ignore `q` and return every session.
-    func searchSessions(_ query: String) async throws -> [SessionInfo] {
-        try await get("/api/v1/sessions?q=\(APIClient.queryValue(query))", as: [SessionInfo].self)
+    /// Search (v0.3 host): every conversation the PC knows, including old and
+    /// outside-Aigo ones. Older hosts answer 404.
+    func search(_ query: String, limit: Int = 60) async throws -> [SearchItem] {
+        try await get("/api/v1/search?q=\(APIClient.queryValue(query))&limit=\(limit)", as: SearchResponse.self).items ?? []
+    }
+
+    func externals() async throws -> [ExternalSession] {
+        try await get("/api/v1/external", as: [ExternalSession].self)
     }
 
     /// "Looks good": moves a session from Review to Done (v0.3 host).

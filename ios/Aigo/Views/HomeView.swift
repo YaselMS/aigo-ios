@@ -187,6 +187,8 @@ struct HomeView: View {
         } else if let s = card.session {
             SessionCard(session: s, column: card.column, onError: { banner = $0 })
                 .contextMenu { contextButtons(s) }
+        } else if let e = card.external {
+            ExternalCard(session: e, column: card.column)
         }
     }
 

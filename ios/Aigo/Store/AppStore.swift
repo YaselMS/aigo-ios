@@ -3,7 +3,18 @@ import UIKit
 
 enum AppRoute: Hashable {
     case session(String)
+    /// Read-only conversation of an outside-Aigo session or a conversation
+    /// file found by search (key "<agent>:<agentSessionId>").
+    case external(String)
     case settings
+}
+
+/// What the read-only conversation view needs to show and stream.
+struct ExternalTarget: Equatable {
+    var key: String
+    var title: String
+    var subtitle: String
+    var stream: String
 }
 
 enum ConnectionState: Equatable {
@@ -44,6 +55,10 @@ final class AppStore: ObservableObject {
     /// Sessions found by search that are not in the live list (older chats,
     /// chats started outside Aigo), so they can be opened.
     @Published private(set) var searchCache: [String: SessionInfo] = [:]
+    /// Agents started outside Aigo (v0.3 hosts send them in the snapshot).
+    @Published private(set) var externals: [ExternalSession] = []
+    /// Outside-Aigo and on-disk conversations opened from search.
+    @Published private(set) var externalTargets: [String: ExternalTarget] = [:]
 
     private(set) var client: APIClient?
     private var events: LiveSocket?
@@ -149,6 +164,25 @@ final class AppStore: ObservableObject {
         sessions.first { $0.id == id } ?? searchCache[id]
     }
 
+    func externalTarget(_ key: String) -> ExternalTarget? {
+        if let e = externals.first(where: { $0.key == key }) {
+            return ExternalTarget(key: key, title: e.displayTitle, subtitle: externalSubtitle(agent: e.agent, cwd: e.cwd),
+                                  stream: e.transcriptStream)
+        }
+        return externalTargets[key]
+    }
+
+    func externalSubtitle(agent: String?, cwd: String?) -> String {
+        let folder = folderName(cwd)
+        let who = agentName(agent)
+        return folder.isEmpty ? "\(who) · outside Aigo" : "\(who) · \(folder) · outside Aigo"
+    }
+
+    func openExternal(_ target: ExternalTarget) {
+        externalTargets[target.key] = target
+        path = [.external(target.key)]
+    }
+
     // MARK: - Board
 
     /// True when the host sends the v0.3 `board` field.
@@ -179,6 +213,14 @@ final class AppStore: ObservableObject {
             guard let col = column(of: s, now: now) else { continue }
             out[col]?.append(BoardCard(id: "s:" + s.id, column: col, item: nil, session: s, date: s.activityDate))
         }
+        // Outside-Aigo agents, unless a pending item already stands for them.
+        let pendingAgents = Set(pending.compactMap { $0.agentSessionId }.filter { !$0.isEmpty })
+        for e in externals {
+            guard let col = e.boardColumn(now: now) else { continue }
+            if let a = e.agentSessionId, pendingAgents.contains(a) { continue }
+            out[col]?.append(BoardCard(id: "e:" + e.key, column: col, item: nil, session: nil,
+                                       date: e.activityDate, external: e))
+        }
         for col in BoardColumn.allCases {
             if col == .ask {
                 out[col]?.sort { ($0.date ?? .distantPast) < ($1.date ?? .distantPast) }
@@ -207,28 +249,37 @@ final class AppStore: ObservableObject {
         return nil
     }
 
-    /// Search: live sessions filtered here, merged with the host's results
-    /// (which also cover older and outside-Aigo chats on v0.3 hosts).
-    func search(_ query: String) async -> [SessionInfo] {
+    /// Search: GET /api/v1/search on v0.3 hosts (every conversation the PC
+    /// knows); older hosts: the live sessions filtered here.
+    func search(_ query: String) async -> [SearchItem] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let local = q.isEmpty ? sortedByActivity(sessions) : sortedByActivity(sessions.filter { $0.matches(q) })
-        guard !q.isEmpty, let c = client, let remote = try? await c.searchSessions(q) else { return local }
-        let liveIDs = Set(sessions.map { $0.id })
-        let remoteIDs = Set(remote.map { $0.id })
-        if remoteIDs == liveIDs && remote.contains(where: { !$0.matches(q) }) {
-            // The host ignored `q` (pre-v0.3): keep the local filter.
-            return local
+        if let c = client {
+            do {
+                return try await c.search(q)
+            } catch {
+                // Older host (404) or unreachable: the local filter still helps.
+            }
         }
-        for s in remote where !liveIDs.contains(s.id) {
-            searchCache[s.id] = s
+        let terms = q.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        let list = sessions.filter { s in terms.allSatisfy { s.matches($0) } }
+        return sortedByActivity(list).map { s in
+            SearchItem(kind: "session", id: s.id, agent: s.agent, agentSessionId: s.agentSessionId,
+                       title: s.displayTitle, cwd: s.cwd, project: folderName(s.cwd), lastPrompt: s.lastPrompt,
+                       lastMessage: nil, status: s.agentStatus, board: s.board,
+                       lastActivity: s.lastActivity ?? s.lastActivityAt, external: false, transcript: nil)
         }
-        var seen = Set<String>()
-        var merged: [SessionInfo] = []
-        for s in local + remote.map({ session(id: $0.id) ?? $0 }) where !seen.contains(s.id) {
-            seen.insert(s.id)
-            merged.append(s)
+    }
+
+    /// Opens a search result: Aigo sessions as usual, anything else read-only.
+    func open(_ item: SearchItem) {
+        if (item.kind ?? "session") == "session" {
+            openSession(item.id)
+            return
         }
-        return merged
+        let title = (item.title ?? "").isEmpty ? (item.lastPrompt ?? AgentNames.display(item.agent)) : item.title!
+        openExternal(ExternalTarget(key: item.id, title: title,
+                                    subtitle: externalSubtitle(agent: item.agent, cwd: item.cwd),
+                                    stream: item.transcript ?? "/api/v1/external/\(item.id)/transcript"))
     }
 
     private func sortedByActivity(_ list: [SessionInfo]) -> [SessionInfo] {
@@ -364,6 +415,7 @@ final class AppStore: ObservableObject {
             withAnimation(.easeInOut(duration: 0.25)) {
                 sessions = snap.sessions ?? []
                 inbox = snap.inbox ?? []
+                externals = snap.external ?? []
                 pruneLocallyAnswered()
                 hasSnapshot = true
                 seedTimeline(snap)
@@ -392,6 +444,15 @@ final class AppStore: ObservableObject {
             withAnimation(.easeInOut(duration: 0.3)) {
                 upsertInbox(item)
                 inboxChanged(from: previous, to: item)
+            }
+        case "external.updated":
+            guard let e = try? decoder.decode(DataEnvelope<ExternalSession>.self, from: data).data else { return }
+            withAnimation(.easeInOut(duration: 0.25)) {
+                if let i = externals.firstIndex(where: { $0.key == e.key }) {
+                    externals[i] = e
+                } else {
+                    externals.append(e)
+                }
             }
         case "inbox.reset":
             Task { await self.reloadInbox() }
@@ -636,7 +697,15 @@ final class AppStore: ObservableObject {
             context = w.subtitle
             detail = w.nowLine
         }
-        live.update(hostName: hostLabel, working: working.count, needsYou: needsYouCount,
+        let board = self.board
+        let needsCount = max(board[.ask]?.count ?? 0, needsYouCount)
+        let workCount = board[.work]?.count ?? working.count
+        if headline.isEmpty, let e = board[.work]?.first?.external {
+            headline = e.displayTitle
+            context = externalSubtitle(agent: e.agent, cwd: e.cwd)
+            detail = e.lastPrompt ?? ""
+        }
+        live.update(hostName: hostLabel, working: workCount, needsYou: needsCount,
                     headline: headline, detail: detail, actionId: actionId, context: context)
     }
 
@@ -650,9 +719,11 @@ final class AppStore: ObservableObject {
         do {
             let s = try await c.sessions()
             let i = try await c.inbox()
+            let ext = try? await c.externals()
             withAnimation(.easeInOut(duration: 0.25)) {
                 sessions = s
                 inbox = i
+                if let ext { externals = ext }
                 pruneLocallyAnswered()
                 hasSnapshot = true
             }
@@ -794,6 +865,8 @@ final class AppStore: ObservableObject {
         answeredHere = []
         locallySeen = []
         searchCache = [:]
+        externals = []
+        externalTargets = [:]
         hasSnapshot = false
         hostDisplayName = ""
         path = []

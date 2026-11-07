@@ -21,6 +21,8 @@ struct RootView: View {
                             switch route {
                             case .session(let id):
                                 SessionView(sessionID: id)
+                            case .external(let key):
+                                ExternalConversationView(key: key)
                             case .settings:
                                 SettingsView()
                             }

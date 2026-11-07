@@ -6,7 +6,7 @@ struct SearchView: View {
     @EnvironmentObject private var store: AppStore
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
-    @State private var results: [SessionInfo] = []
+    @State private var results: [SearchItem] = []
     @State private var searching = false
     @FocusState private var focused: Bool
 
@@ -48,12 +48,12 @@ struct SearchView: View {
                             .foregroundStyle(Theme.secondary)
                             .padding(.top, 40)
                     }
-                    ForEach(results) { s in
+                    ForEach(results) { item in
                         Button {
                             dismiss()
-                            store.openSession(s.id)
+                            store.open(item)
                         } label: {
-                            row(s)
+                            row(item)
                         }
                         .buttonStyle(.plain)
                     }
@@ -80,26 +80,29 @@ struct SearchView: View {
         }
     }
 
-    private func row(_ s: SessionInfo) -> some View {
-        let col = store.column(of: s)
+    private func row(_ item: SearchItem) -> some View {
+        let col = BoardColumn(rawValue: item.board ?? "")
+        let line = [item.lastMessage, item.lastPrompt]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty && $0 != item.title }
         return HStack(alignment: .top, spacing: 10) {
             Circle()
                 .fill(col?.color ?? Theme.idle)
                 .frame(width: 8, height: 8)
                 .padding(.top, 6)
             VStack(alignment: .leading, spacing: 3) {
-                Text(s.displayTitle)
+                Text((item.title ?? "").isEmpty ? AgentNames.display(item.agent) : item.title!)
                     .font(.aigo(.callout, .semibold))
                     .foregroundStyle(Theme.text)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
-                Text(meta(s, col))
+                Text(meta(item, col))
                     .font(.aigo(.caption2))
                     .foregroundStyle(Theme.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                if let p = s.lastPrompt, !p.isEmpty {
-                    Text(p)
+                if let line {
+                    Text(line)
                         .font(.aigo(.footnote))
                         .foregroundStyle(Theme.secondary)
                         .lineLimit(2)
@@ -114,11 +117,13 @@ struct SearchView: View {
         .contentShape(Rectangle())
     }
 
-    private func meta(_ s: SessionInfo, _ col: BoardColumn?) -> String {
-        var parts = [s.subtitle]
-        if s.isExternal { parts.append("outside Aigo") }
-        parts.append(col?.label ?? s.status.label)
-        let age = Age.short(s.activityDate)
+    private func meta(_ item: SearchItem, _ col: BoardColumn?) -> String {
+        var parts = [store.agentName(item.agent)]
+        let place = (item.project ?? "").isEmpty ? folderName(item.cwd) : item.project!
+        if !place.isEmpty { parts.append(place) }
+        if item.external == true { parts.append("outside Aigo") }
+        if let col { parts.append(col.label) }
+        let age = Age.short(AigoDate.parse(item.lastActivity))
         if !age.isEmpty { parts.append(age) }
         return parts.joined(separator: " · ")
     }

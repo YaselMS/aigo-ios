@@ -226,6 +226,36 @@ struct BoardCard: Identifiable, Equatable {
     let item: InboxItem?
     let session: SessionInfo?
     let date: Date?
+    var external: ExternalSession? = nil
+}
+
+extension ExternalSession {
+    var activityDate: Date? {
+        AigoDate.parse(lastActivity) ?? AigoDate.parse(updatedAt) ?? AigoDate.parse(statusChangedAt)
+    }
+
+    var displayTitle: String {
+        if let t = title, !t.isEmpty { return t }
+        if let p = lastPrompt?.trimmingCharacters(in: .whitespacesAndNewlines), !p.isEmpty { return p }
+        let folder = folderName(cwd)
+        return folder.isEmpty ? AgentNames.display(agent) : "\(AgentNames.display(agent)) · \(folder)"
+    }
+
+    var transcriptStream: String { "/api/v1/external/\(key)/transcript" }
+
+    /// Outside-Aigo sessions are only on the board while active: ask while
+    /// blocked, work while busy (host `board`, or computed for older hosts).
+    func boardColumn(now: Date = Date()) -> BoardColumn? {
+        if let b = board {
+            return b == "ask" ? .ask : (b == "work" ? .work : nil)
+        }
+        guard ended != true, stale != true, let last = activityDate, now.timeIntervalSince(last) < 30 * 60 else { return nil }
+        switch status ?? "" {
+        case "blocked": return .ask
+        case "working": return .work
+        default: return nil
+        }
+    }
 }
 
 extension SessionInfo {

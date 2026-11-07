@@ -14,10 +14,16 @@ final class TranscriptModel: ObservableObject {
     private var sessionID: String?
 
     func start(client: APIClient, sessionID: String) {
-        if self.sessionID == sessionID && socket != nil { return }
+        start(client: client, key: sessionID, path: "/api/v1/sessions/\(sessionID)/transcript")
+    }
+
+    /// Any transcript stream, e.g. WS /api/v1/external/{key}/transcript
+    /// (outside-Aigo sessions and conversation files found by search).
+    func start(client: APIClient, key: String, path: String) {
+        if self.sessionID == key && socket != nil { return }
         stop()
-        self.sessionID = sessionID
-        let s = LiveSocket(client: client, path: "/api/v1/sessions/\(sessionID)/transcript")
+        self.sessionID = key
+        let s = LiveSocket(client: client, path: path)
         s.onMessage = { [weak self] data in
             self?.handle(data)
         }
