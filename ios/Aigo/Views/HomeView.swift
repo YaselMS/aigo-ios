@@ -6,6 +6,7 @@ import UIKit
 /// every card opens its conversation. "New work" sits at the bottom.
 struct HomeView: View {
     @EnvironmentObject private var store: AppStore
+    @EnvironmentObject private var updates: UpdateChecker
     @State private var tab: BoardColumn = .ask
     @State private var pickedInitialTab = false
     @State private var killing: SessionInfo?
@@ -25,6 +26,12 @@ struct HomeView: View {
                     }
                     if let banner = banner {
                         InlineBanner(text: banner) { self.banner = nil }
+                    }
+                    if updates.showsBanner {
+                        UpdateNotice {
+                            withAnimation { updates.dismissBanner() }
+                        }
+                        .transition(.opacity)
                     }
                     if !store.hasSnapshot && store.connectionProblem == nil {
                         SkeletonRows(count: 3)

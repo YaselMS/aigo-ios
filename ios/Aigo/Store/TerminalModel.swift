@@ -1,47 +1,100 @@
 import Foundation
 
-/// Live terminal of one session.
+/// Live terminal of one session (docs/API.md §6, issue #46).
 ///
-/// Streams WS /api/v1/sessions/{id}/attach: binary output frames are only
-/// used as a "something changed" signal that triggers a debounced refresh of
-/// the host-rendered screen (GET /screen, the host's VT emulator), so TUIs,
-/// colours-free shells and agent menus all render correctly. Input is sent as
-/// raw bytes over the same socket (falls back to POST /input).
+/// Streams `WS /api/v1/sessions/{id}/attach?history=1000` into a local VT
+/// emulator. The host owns the truth: every `size` message sets the emulator
+/// to the PTY's cols×rows first, and a `size` with `replay:true` is followed
+/// by a snapshot (it clears the screen and scrollback itself) that ends with
+/// `replayed`. Nothing is cached or replayed locally; after a reconnect or a
+/// return from the background the socket re-attaches and gets a new snapshot.
+///
+/// Size: "PC size" sends `resize` with `mode:"view"` (the PC keeps its size,
+/// the phone scales the text to fit); "Fit to phone" sends `mode:"interactive"`
+/// (the PTY takes the phone's size). Typing switches to Fit to phone unless
+/// the user explicitly picked PC size. Outside the Terminal tab the phone is
+/// always in view mode.
+///
+/// GET /screen is still polled (debounced) for the on-screen menu and the
+/// "working" line; it no longer drives the rendering.
 @MainActor
 final class TerminalModel: ObservableObject {
+    enum SizeChoice: String {
+        case pc
+        case phone
+    }
+
+    /// Host-parsed screen: menu and "working" line.
     @Published private(set) var screen: ScreenState?
     /// The attach socket is open.
     @Published private(set) var live = false
     @Published private(set) var problem: String?
     @Published private(set) var exited = false
-    /// The PTY is resized to the phone's width while on the Terminal tab.
-    @Published private(set) var fitToPhone = false
+    /// PC size (view) or Fit to phone (interactive).
+    @Published private(set) var choice: SizeChoice = .pc
+    /// The PTY size from the latest `size` message.
+    @Published private(set) var ptySize: GridSize?
+    /// This phone owns the PTY size.
+    @Published private(set) var owner = false
+    /// The host speaks the v0.4 attach protocol (sends `size`).
+    @Published private(set) var sizeProtocol = false
 
-    /// Minimum delay between output and the screen refresh it triggers.
-    var debounceNanos: UInt64 = 150_000_000
+    let emulator = VTEmulator(cols: 80, rows: 24)
+    weak var canvas: TerminalCanvasView? {
+        didSet { canvas?.holdsUpdates = replaying }
+    }
+
+    /// Minimum delay between output and the GET /screen it triggers.
+    var debounceNanos: UInt64 = 400_000_000
+    /// Scrollback lines per snapshot.
+    static let historyLines = 1000
 
     private var socket: LiveSocket?
     private var client: APIClient?
     private var sessionID: String?
-    private var replayed = false
     private var refreshTask: Task<Void, Never>?
     private var refreshGen = 0
     private var dirty = false
     private var fallback: Task<Void, Never>?
-    private var originalSize: (cols: Int, rows: Int)?
-    private var phoneSize: (cols: Int, rows: Int)?
-    private var appliedSize: (cols: Int, rows: Int)?
+
+    /// The Terminal tab is on screen (interactive mode allowed).
+    private var visible = false
+    /// The user picked PC size / Fit to phone themselves.
+    private var explicitChoice = false
+    /// Between `size(replay:true)` (or `hello` on older hosts) and `replayed`.
+    private var replaying = false {
+        didSet { canvas?.holdsUpdates = replaying }
+    }
+    private var replayWatchdog: Task<Void, Never>?
+    /// Input typed while a snapshot was being written.
+    private var pendingInput: [Data] = []
+    /// The first snapshot of this connection has been written.
+    private var attached = false
+    private var gotSize = false
+    private var legacyReplay = false
+    private var helloSize: GridSize?
+    /// The grid that fits the phone at the chosen text size.
+    private var phoneGrid: GridSize?
+    private var lastSent: (grid: GridSize, mode: String)?
+    private var resizeTask: Task<Void, Never>?
+    /// The emulator shows GET /screen text (exited session), not a stream.
+    private var showsScreenText = false
+
+    var mode: String {
+        visible && choice == .phone ? "interactive" : "view"
+    }
 
     func start(client: APIClient, sessionID: String, running: Bool) {
-        if self.sessionID == sessionID && (socket != nil || !running) { return }
+        if self.sessionID == sessionID && self.client === client && (socket != nil || !running) { return }
         stop()
         self.client = client
         self.sessionID = sessionID
         exited = !running
         if running {
-            let s = LiveSocket(client: client, path: "/api/v1/sessions/\(sessionID)/attach")
-            s.onBinary = { [weak self] _ in
-                self?.output()
+            let s = LiveSocket(client: client,
+                               path: "/api/v1/sessions/\(sessionID)/attach?history=\(TerminalModel.historyLines)")
+            s.onBinary = { [weak self] data in
+                self?.output(data)
             }
             s.onMessage = { [weak self] data in
                 self?.frame(data)
@@ -57,7 +110,6 @@ final class TerminalModel: ObservableObject {
     }
 
     func stop() {
-        restoreSize()
         socket?.stop()
         socket = nil
         refreshGen += 1
@@ -65,21 +117,97 @@ final class TerminalModel: ObservableObject {
         refreshTask = nil
         fallback?.cancel()
         fallback = nil
+        resizeTask?.cancel()
+        resizeTask = nil
+        replayWatchdog?.cancel()
+        replayWatchdog = nil
         sessionID = nil
         live = false
-        replayed = false
-        appliedSize = nil
-        originalSize = nil
+        resetConnectionState()
     }
 
-    /// The session (re)started on the PC: reconnect the stream.
+    private func resetConnectionState() {
+        replaying = false
+        pendingInput.removeAll()
+        attached = false
+        gotSize = false
+        legacyReplay = false
+        lastSent = nil
+    }
+
+    /// The session (re)started on the PC: attach again.
     func reconnect() {
         guard let c = client, let sid = sessionID else { return }
-        let fit = fitToPhone
         stop()
         start(client: c, sessionID: sid, running: true)
-        if fit {
-            fitToPhone = true
+    }
+
+    /// Back from the background: re-attach for a fresh snapshot (iOS
+    /// suspends sockets; never replay what was cached).
+    func resume() {
+        guard let s = socket else {
+            scheduleRefresh(immediate: true)
+            return
+        }
+        resetConnectionState()
+        s.restart()
+        scheduleRefresh(immediate: true)
+    }
+
+    /// Asks for a fresh snapshot on the live socket.
+    func refreshSnapshot() {
+        guard let s = socket, s.isOpen, sizeProtocol, !replaying else {
+            resume()
+            return
+        }
+        s.send(["type": "refresh"])
+    }
+
+    // MARK: - Size choice
+
+    /// The Terminal tab is shown / hidden.
+    func setVisible(_ on: Bool) {
+        guard visible != on else { return }
+        visible = on
+        sendResize()
+    }
+
+    /// The user's explicit choice in the Terminal tab.
+    func choose(_ c: SizeChoice) {
+        explicitChoice = true
+        guard choice != c else { return }
+        choice = c
+        sendResize()
+    }
+
+    /// Columns/rows that fit the visible terminal at the chosen text size.
+    /// Debounced: keyboard and rotation animations report many sizes.
+    func setPhoneGrid(_ g: GridSize) {
+        let grid = GridSize(cols: min(max(g.cols, 20), 400), rows: min(max(g.rows, 5), 200))
+        guard grid != phoneGrid else { return }
+        phoneGrid = grid
+        resizeTask?.cancel()
+        resizeTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard !Task.isCancelled else { return }
+            self?.sendResize()
+        }
+    }
+
+    /// Reports this phone's size and mode to the host (once per change).
+    private func sendResize(force: Bool = false) {
+        guard let s = socket, s.isOpen, attached, let grid = phoneGrid else { return }
+        let m = mode
+        if sizeProtocol {
+            if !force, let last = lastSent, last.grid == grid, last.mode == m { return }
+            lastSent = (grid, m)
+            s.send(["type": "resize", "cols": grid.cols, "rows": grid.rows, "mode": m])
+        } else {
+            // Older host: every resize is applied, so only send one for Fit to phone.
+            guard m == "interactive" else { return }
+            if !force, let last = lastSent, last.grid == grid { return }
+            lastSent = (grid, m)
+            s.send(["type": "resize", "cols": grid.cols, "rows": grid.rows])
         }
     }
 
@@ -89,17 +217,31 @@ final class TerminalModel: ObservableObject {
         guard let f = try? JSONDecoder().decode(AttachFrame.self, from: data) else { return }
         switch f.type {
         case "hello":
-            replayed = false
             exited = false
-            if originalSize == nil, let c = f.session?.cols, let r = f.session?.rows, c > 0, r > 0 {
-                originalSize = (c, r)
+            resetConnectionState()
+            if let c = f.session?.cols, let r = f.session?.rows, c > 0, r > 0 {
+                helloSize = GridSize(cols: c, rows: r)
+            }
+            // Older hosts replay raw output right after hello; v0.4 hosts send `size` first.
+            beginReplay()
+        case "size":
+            sizeProtocol = true
+            gotSize = true
+            if let c = f.cols, let r = f.rows, c > 0, r > 0 {
+                // Resize the emulator first; the snapshot that follows draws at this size.
+                emulator.resize(cols: c, rows: r)
+                ptySize = GridSize(cols: c, rows: r)
+                canvas?.contentChanged()
+            }
+            owner = f.owner ?? false
+            if f.replay == true {
+                beginReplay()
+            } else if !attached {
+                // Do not wait for a snapshot that will not come.
+                endReplay()
             }
         case "replayed":
-            replayed = true
-            if fitToPhone {
-                applyFit()
-            }
-            scheduleRefresh(immediate: true)
+            endReplay()
         case "exit", "removed":
             exited = true
             scheduleRefresh(immediate: true)
@@ -108,9 +250,52 @@ final class TerminalModel: ObservableObject {
         }
     }
 
-    private func output() {
-        // The replay of old output is followed by "replayed"; one refresh then is enough.
-        if replayed {
+    private func beginReplay() {
+        replaying = true
+        replayWatchdog?.cancel()
+        replayWatchdog = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.endReplay()
+        }
+    }
+
+    private func endReplay() {
+        replayWatchdog?.cancel()
+        replayWatchdog = nil
+        let first = !attached
+        if first && !sizeProtocol && !legacyReplay, let h = helloSize {
+            // Older host with nothing to replay.
+            emulator.resize(cols: h.cols, rows: h.rows)
+            ptySize = h
+        }
+        replaying = false
+        attached = true
+        canvas?.contentChanged()
+        flushPendingInput()
+        if first {
+            sendResize(force: true)
+        }
+        scheduleRefresh(immediate: true)
+    }
+
+    private func output(_ data: Data) {
+        if showsScreenText {
+            showsScreenText = false
+            emulator.reset()
+        }
+        if !gotSize && !attached && !legacyReplay {
+            // Older host: raw output history recorded at earlier sizes. Start clean once.
+            legacyReplay = true
+            if let h = helloSize {
+                emulator.resize(cols: h.cols, rows: h.rows)
+                ptySize = h
+            }
+            emulator.reset()
+        }
+        emulator.feed(data)
+        if !replaying {
+            canvas?.contentChanged()
             scheduleRefresh()
         }
     }
@@ -124,15 +309,14 @@ final class TerminalModel: ObservableObject {
             problem = nil
         case .closed(let p):
             live = false
-            replayed = false
-            appliedSize = nil
+            resetConnectionState()
             if !exited {
                 problem = p.message
             }
         }
     }
 
-    // MARK: - Screen refresh
+    // MARK: - Screen (menu, working line)
 
     /// Coalesces bursts of output into at most one GET /screen per debounce window.
     func scheduleRefresh(immediate: Bool = false) {
@@ -167,10 +351,34 @@ final class TerminalModel: ObservableObject {
             if s != screen {
                 screen = s
             }
+            if socket == nil {
+                showScreenText(s.text ?? "")
+            }
         }
     }
 
-    /// Safety net: a slow poll while the stream is down (or quiet).
+    private var shownText: String?
+
+    /// Exited sessions have no stream: show the host's last screen text.
+    private func showScreenText(_ text: String) {
+        guard text != shownText else { return }
+        shownText = text
+        let lines = text.components(separatedBy: "\n").map { line -> String in
+            var l = Substring(line)
+            while let last = l.last, last == " " || last == "\r" { l = l.dropLast() }
+            return String(l)
+        }
+        var trimmed = lines
+        while let last = trimmed.last, last.isEmpty { trimmed.removeLast() }
+        let width = max(20, trimmed.map { $0.unicodeScalars.count }.max() ?? 20)
+        emulator.resize(cols: min(width, 400), rows: max(1, trimmed.count))
+        emulator.reset()
+        emulator.feed(trimmed.joined(separator: "\r\n"))
+        showsScreenText = true
+        canvas?.contentChanged()
+    }
+
+    /// Safety net: a slow poll for the menu / working line.
     private func startFallback() {
         fallback?.cancel()
         fallback = Task { [weak self] in
@@ -191,15 +399,31 @@ final class TerminalModel: ObservableObject {
     // MARK: - Input
 
     /// Sends raw bytes to the PTY. Returns an error message, or nil.
+    /// Typing switches to Fit to phone unless the user picked PC size.
     func send(_ text: String) async -> String? {
         guard !text.isEmpty else { return nil }
-        if let s = socket, s.sendData(Data(text.utf8)) {
-            scheduleRefresh()
-            return nil
+        var bytes = text
+        if emulator.appCursorKeys, let mapped = TerminalKeys.applicationCursor[text] {
+            bytes = mapped
+        }
+        if visible && choice == .pc && !explicitChoice {
+            choice = .phone
+            sendResize()
+        }
+        canvas?.scrollToBottom()
+        if let s = socket, s.isOpen {
+            if replaying {
+                // No input while a snapshot is being written (API.md §6).
+                pendingInput.append(Data(bytes.utf8))
+                return nil
+            }
+            if s.sendData(Data(bytes.utf8)) {
+                return nil
+            }
         }
         guard let c = client, let sid = sessionID else { return "Not connected to your PC." }
         do {
-            try await c.input(sid, data: text)
+            try await c.input(sid, data: bytes)
             scheduleRefresh()
             return nil
         } catch {
@@ -207,54 +431,20 @@ final class TerminalModel: ObservableObject {
         }
     }
 
-    // MARK: - Size
-
-    /// Columns/rows that fit the visible terminal area.
-    func setPhoneSize(cols: Int, rows: Int) {
-        let c = min(max(cols, 20), 300)
-        let r = min(max(rows, 8), 200)
-        if let p = phoneSize, p.cols == c, p.rows == r { return }
-        phoneSize = (c, r)
-        if fitToPhone {
-            applyFit()
+    private func flushPendingInput() {
+        guard !pendingInput.isEmpty, let s = socket, s.isOpen else {
+            pendingInput.removeAll()
+            return
         }
+        let queued = pendingInput
+        pendingInput.removeAll()
+        for d in queued { s.sendData(d) }
     }
 
-    func setFit(_ on: Bool) {
-        fitToPhone = on
-        if on {
-            applyFit()
-        } else {
-            restoreSize()
-        }
-    }
+    // MARK: - Copy
 
-    private func applyFit() {
-        guard let p = phoneSize else { return }
-        if let a = appliedSize, a.cols == p.cols, a.rows == p.rows { return }
-        resize(cols: p.cols, rows: p.rows)
-        appliedSize = p
-    }
-
-    /// Puts the PTY back to the size it had before the phone attached.
-    func restoreSize() {
-        guard appliedSize != nil else { return }
-        appliedSize = nil
-        if let o = originalSize {
-            resize(cols: o.cols, rows: o.rows)
-        }
-    }
-
-    private func resize(cols: Int, rows: Int) {
-        if let s = socket, s.isOpen {
-            s.send(["type": "resize", "cols": cols, "rows": rows])
-        } else if let c = client, let sid = sessionID {
-            Task {
-                try? await c.call("POST", "/api/v1/sessions/\(sid)/resize", body: ["cols": cols, "rows": rows])
-            }
-        }
-        scheduleRefresh()
-    }
+    func screenText() -> String { emulator.text(includeHistory: false) }
+    func allText() -> String { emulator.text(includeHistory: true) }
 }
 
 /// Byte sequences for the terminal key bar (xterm / ConPTY compatible).
@@ -281,5 +471,13 @@ enum TerminalKeys {
         Key(label: "3", bytes: "3", accessibility: "3"),
         Key(label: "y", bytes: "y", accessibility: "y"),
         Key(label: "n", bytes: "n", accessibility: "n"),
+    ]
+
+    /// Arrow keys while the program asked for application cursor keys (DECCKM).
+    static let applicationCursor: [String: String] = [
+        "\u{1B}[A": "\u{1B}OA",
+        "\u{1B}[B": "\u{1B}OB",
+        "\u{1B}[C": "\u{1B}OC",
+        "\u{1B}[D": "\u{1B}OD",
     ]
 }

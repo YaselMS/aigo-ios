@@ -4,6 +4,7 @@ import SwiftUI
 struct AigoApp: App {
     @StateObject private var store = AppStore()
     @StateObject private var appearance = AppearanceStore()
+    @StateObject private var updates = UpdateChecker()
 
     init() {
         NotificationManager.shared.setup()
@@ -16,6 +17,7 @@ struct AigoApp: App {
                 .environment(\.font, .aigo(.body))
                 .environmentObject(store)
                 .environmentObject(appearance)
+                .environmentObject(updates)
                 .preferredColorScheme(.dark)
                 .tint(Theme.lime)
                 .onOpenURL { url in
@@ -23,6 +25,9 @@ struct AigoApp: App {
                 }
                 .onAppear {
                     store.start()
+                }
+                .task {
+                    await updates.checkIfDue()
                 }
                 .onChange(of: appearance.revision) { _, _ in
                     // The Live Activity uses the same font.

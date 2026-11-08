@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var store: AppStore
     @EnvironmentObject private var appearance: AppearanceStore
+    @EnvironmentObject private var updates: UpdateChecker
     @State private var showPair = false
     @State private var forgetting: HostCredentials?
 
@@ -82,8 +83,33 @@ struct SettingsView: View {
                     }
                 }
                 if let host = store.activeHost {
-                    LabeledContent("Address") {
-                        Text(host.addr).font(Theme.monoSmall)
+                    LabeledContent("Address in use") {
+                        Text(store.activeAddress ?? host.addr)
+                            .font(Theme.monoSmall)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    let others = host.endpoints.filter { $0 != (store.activeAddress ?? host.addr) }
+                    if !others.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Other addresses (tried in order if this one stops answering)")
+                                .font(.aigo(.footnote))
+                                .foregroundStyle(Theme.secondary)
+                            ForEach(others, id: \.self) { a in
+                                HStack(spacing: 6) {
+                                    Text(a).font(Theme.monoSmall).foregroundStyle(Theme.text)
+                                    if HostAddress.isTailscale(a) {
+                                        Text("Tailscale")
+                                            .font(.aigo(size: 10, .semibold))
+                                            .foregroundStyle(Theme.iceText)
+                                    } else if HostAddress.isLAN(a) {
+                                        Text("local network")
+                                            .font(.aigo(size: 10))
+                                            .foregroundStyle(Theme.secondary)
+                                    }
+                                }
+                            }
+                        }
+                        .padding(.vertical, 4)
                     }
                     LabeledContent("Fingerprint") {
                         Text(String(host.fingerprint.prefix(16)) + "…").font(Theme.monoSmall)
@@ -162,6 +188,33 @@ struct SettingsView: View {
 
             Section("About") {
                 LabeledContent("Version", value: SettingsView.versionString)
+                if updates.updateAvailable {
+                    UpdateNotice()
+                        .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
+                } else {
+                    Button {
+                        Task { await updates.checkIfDue(force: true) }
+                    } label: {
+                        HStack {
+                            Label("Check for updates", systemImage: "arrow.triangle.2.circlepath")
+                            Spacer()
+                            if updates.checking {
+                                ProgressView().controlSize(.small)
+                            } else if updates.latestTag != nil {
+                                Text("Up to date")
+                                    .font(.aigo(.footnote))
+                                    .foregroundStyle(Theme.secondary)
+                            }
+                        }
+                        .frame(minHeight: 44)
+                    }
+                    .disabled(updates.checking)
+                    if let err = updates.lastError {
+                        Text(err)
+                            .font(.aigo(.footnote))
+                            .foregroundStyle(Theme.secondary)
+                    }
+                }
                 Text("Aigo controls the coding agents and terminals running on your PC.")
                     .font(.aigo(.footnote))
                     .foregroundStyle(Theme.secondary)
@@ -214,7 +267,7 @@ struct SettingsView: View {
 
     static var versionString: String {
         let info = Bundle.main.infoDictionary
-        let version = info?["CFBundleShortVersionString"] as? String ?? "0.3.0"
+        let version = info?["CFBundleShortVersionString"] as? String ?? "0"
         let build = info?["CFBundleVersion"] as? String ?? "1"
         return "\(version) (\(build))"
     }

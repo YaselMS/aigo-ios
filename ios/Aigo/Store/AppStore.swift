@@ -61,7 +61,16 @@ final class AppStore: ObservableObject {
     @Published private(set) var externalTargets: [String: ExternalTarget] = [:]
 
     private(set) var client: APIClient?
+    /// Increments whenever `client` is replaced (another PC or another address).
+    @Published private(set) var clientGeneration = 0
+    /// The host:port the app is using for the active PC.
+    @Published private(set) var activeAddress: String?
     private var events: LiveSocket?
+    /// Trying the PC's other addresses after a failed connection (#39).
+    private var failoverTask: Task<Void, Never>?
+    private var lastFailover: Date?
+    /// No address of the active PC answered in the last round.
+    private var allUnreachable: ConnectionProblem?
     private let live: LiveActivityController
     private var started = false
     private var wentToBackground = false
@@ -354,6 +363,8 @@ final class AppStore: ObservableObject {
         }
         let c = APIClient(credentials: host)
         client = c
+        clientGeneration += 1
+        activeAddress = c.addr
         hostDisplayName = host.hostName
         connection = .connecting
         let socket = LiveSocket(client: c, path: "/api/v1/events")
@@ -371,6 +382,7 @@ final class AppStore: ObservableObject {
     /// Retry button: reconnect right away.
     func retry() {
         guard activeHost != nil else { return }
+        lastFailover = nil
         if events == nil {
             connect()
         } else {
@@ -385,6 +397,10 @@ final class AppStore: ObservableObject {
         events = nil
         client?.invalidate()
         client = nil
+        activeAddress = nil
+        failoverTask?.cancel()
+        failoverTask = nil
+        allUnreachable = nil
     }
 
     private func socketStateChanged(_ state: LiveSocket.State) {
@@ -394,13 +410,86 @@ final class AppStore: ObservableObject {
                 connection = .connecting
             }
         case .open:
+            allUnreachable = nil
             withAnimation(.easeInOut(duration: 0.2)) {
                 connection = .online
             }
         case .closed(let problem):
+            let shown = (!problem.needsRepair ? allUnreachable : nil) ?? problem
             withAnimation(.easeInOut(duration: 0.2)) {
-                connection = .offline(problem)
+                connection = .offline(shown)
             }
+            if !problem.needsRepair {
+                startFailover()
+            }
+        }
+    }
+
+    // MARK: - Addresses (#39)
+
+    /// The saved address did not answer: try the PC's other addresses in
+    /// order (about 3 s each, pinned certificate on every one) and switch to
+    /// the first that answers.
+    private func startFailover() {
+        guard failoverTask == nil, let host = activeHost else { return }
+        let list = host.endpoints
+        guard list.count > 1 else { return }
+        if let last = lastFailover, Date().timeIntervalSince(last) < 15 { return }
+        lastFailover = Date()
+        let current = client?.addr ?? host.addr
+        let order = list.filter { $0 != current } + [current]
+        let hostID = host.id
+        let fp = host.fingerprint
+        let token = host.token
+        failoverTask = Task { [weak self] in
+            for addr in order {
+                let result = await APIClient.probe(addr: addr, fingerprint: fp, token: token)
+                guard let self = self, !Task.isCancelled, self.activeHostID == hostID else { return }
+                if case .reachable = result {
+                    self.failoverTask = nil
+                    self.allUnreachable = nil
+                    if addr != self.client?.addr {
+                        self.switchAddress(to: addr)
+                    } else {
+                        self.events?.restart()
+                    }
+                    return
+                }
+            }
+            guard let self = self, !Task.isCancelled, self.activeHostID == hostID else { return }
+            self.failoverTask = nil
+            let p = ConnectionProblem.unreachable(self.hostLabel, addresses: order)
+            self.allUnreachable = p
+            if case .offline(let old) = self.connection, !old.needsRepair {
+                self.connection = .offline(p)
+            }
+        }
+    }
+
+    /// Uses another address of the active PC from now on.
+    private func switchAddress(to addr: String) {
+        guard let i = hosts.firstIndex(where: { $0.id == activeHostID }) else { return }
+        if hosts[i].addrs == nil {
+            hosts[i].addrs = hosts[i].endpoints
+        }
+        hosts[i].addr = addr
+        HostVault.save(hosts)
+        connect()
+    }
+
+    /// Saves the PC's endpoints from host info (`remote.endpoints`).
+    private func rememberEndpoints(_ endpoints: [String]) {
+        guard let i = hosts.firstIndex(where: { $0.id == activeHostID }) else { return }
+        var list = PairDraft.dedupe(endpoints.map(PairDraft.normalizeAddress))
+        guard !list.isEmpty else { return }
+        let inUse = client?.addr ?? hosts[i].addr
+        if !list.contains(inUse) {
+            // An address the user typed (or one the host does not list): keep it.
+            list.append(inUse)
+        }
+        if hosts[i].addrs != list {
+            hosts[i].addrs = list
+            HostVault.save(hosts)
         }
     }
 
@@ -423,6 +512,9 @@ final class AppStore: ObservableObject {
             if let name = snap.host?.hostName, !name.isEmpty {
                 hostDisplayName = name
                 rememberHostName(name)
+            }
+            if let endpoints = snap.host?.remote?.endpoints, !endpoints.isEmpty {
+                rememberEndpoints(endpoints)
             }
         case "session.updated":
             guard let info = try? decoder.decode(DataEnvelope<SessionInfo>.self, from: data).data else { return }
@@ -774,7 +866,8 @@ final class AppStore: ObservableObject {
     /// Pair again with the active PC (prefills its address and name).
     func repairActiveHost() {
         if let host = activeHost {
-            pairDraft = PairDraft(addr: host.addr, fingerprint: "", code: "", hostName: host.hostName)
+            pairDraft = PairDraft(addr: host.addr, fingerprint: "", code: "", hostName: host.hostName,
+                                  addrs: host.endpoints)
         } else {
             pairDraft = nil
         }
@@ -807,10 +900,10 @@ final class AppStore: ObservableObject {
     // MARK: - Hosts
 
     func pair(_ draft: PairDraft) async throws {
-        let addr = PairDraft.normalizeAddress(draft.addr)
+        let candidates = draft.candidates
         let fp = CertificatePin.normalize(draft.fingerprint)
         let code = draft.code.filter { $0.isNumber }
-        guard !addr.isEmpty else {
+        guard !candidates.isEmpty else {
             throw APIError(status: 0, message: "Enter the PC's address, like 10.0.0.10:47211.")
         }
         guard fp.count == 64 else {
@@ -819,8 +912,8 @@ final class AppStore: ObservableObject {
         guard code.count == 6 else {
             throw APIError(status: 0, message: "The pairing code has 6 digits.")
         }
-        var creds = try await APIClient.pair(addr: addr, fingerprint: fp, code: code,
-                                             deviceName: UIDevice.current.name)
+        var creds = try await pairFirstReachable(candidates, fingerprint: fp, code: code)
+        creds.addrs = candidates
         if creds.hostName.isEmpty || creds.hostName == "PC", !draft.hostName.isEmpty {
             creds.hostName = draft.hostName
         }
@@ -831,6 +924,31 @@ final class AppStore: ObservableObject {
         showPairSheet = false
         Haptics.success()
         activate(creds.id)
+    }
+
+    /// Pairs through the first address that answers with the pinned
+    /// certificate (docs/API.md §7). A single address is tried directly.
+    private func pairFirstReachable(_ candidates: [String], fingerprint fp: String, code: String) async throws -> HostCredentials {
+        let device = UIDevice.current.name
+        if candidates.count == 1 {
+            return try await APIClient.pair(addr: candidates[0], fingerprint: fp, code: code, deviceName: device)
+        }
+        var otherDevice = false
+        for addr in candidates {
+            switch await APIClient.probe(addr: addr, fingerprint: fp, token: "") {
+            case .reachable:
+                return try await APIClient.pair(addr: addr, fingerprint: fp, code: code, deviceName: device)
+            case .wrongPC:
+                otherDevice = true
+            case .unreachable:
+                continue
+            }
+        }
+        var message = ConnectionProblem.unreachable("the PC", addresses: candidates).message
+        if otherDevice {
+            message = "Another device answered at one of the PC's addresses (its certificate does not match). " + message
+        }
+        throw APIError(status: 0, message: message)
     }
 
     func activate(_ id: String) {

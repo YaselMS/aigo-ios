@@ -12,6 +12,8 @@ struct PairView: View {
     @State private var code = ""
     @State private var fingerprint = ""
     @State private var hostName = ""
+    /// Every address from the pairing link (`a=`), best first.
+    @State private var addrs: [String] = []
     @State private var showScanner = false
     @State private var showManual = false
     @State private var busy = false
@@ -179,9 +181,17 @@ struct PairView: View {
         }
     }
 
+    private var addressHint: String {
+        let others = addrs.filter { $0 != PairDraft.normalizeAddress(address) }
+        if others.isEmpty {
+            return "LAN or Tailscale address. The port defaults to 47211."
+        }
+        return "Also tries, in order: " + others.joined(separator: ", ")
+    }
+
     private var manual: some View {
         VStack(alignment: .leading, spacing: 14) {
-            fieldBlock("PC address", hint: "LAN or Tailscale address. The port defaults to 47211.") {
+            fieldBlock("PC address", hint: addressHint) {
                 TextField("10.0.0.10:47211", text: $address)
                     .keyboardType(.URL)
                     .textInputAutocapitalization(.never)
@@ -273,6 +283,7 @@ struct PairView: View {
         if !d.code.isEmpty { code = d.code }
         if !d.fingerprint.isEmpty { fingerprint = d.fingerprint }
         if !d.hostName.isEmpty { hostName = d.hostName }
+        if !d.addrs.isEmpty { addrs = d.addrs }
         error = nil
     }
 
@@ -295,7 +306,7 @@ struct PairView: View {
         field = nil
         withAnimation { busy = true }
         error = nil
-        let d = PairDraft(addr: address, fingerprint: fingerprint, code: code, hostName: hostName)
+        let d = PairDraft(addr: address, fingerprint: fingerprint, code: code, hostName: hostName, addrs: addrs)
         Task {
             do {
                 try await store.pair(d)

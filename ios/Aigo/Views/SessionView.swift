@@ -25,7 +25,8 @@ struct SessionView: View {
     @State private var confirmRemove = false
     @State private var pickedDefaultTab = false
     @AppStorage("terminalFontSize") private var termFont: Double = 12
-    @AppStorage("terminalFit") private var termFit = false
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var wasInBackground = false
     @FocusState private var focus: Field?
 
     private enum Field: Hashable {
@@ -55,10 +56,9 @@ struct SessionView: View {
                     case .changes:
                         ChangesView(cwd: s.cwd ?? "")
                     default:
-                        TerminalPane(model: terminal, fontSize: $termFont, fit: fitBinding)
-                            .onTapGesture {
-                                focus = .terminal
-                            }
+                        TerminalPane(model: terminal, fontSize: $termFont) {
+                            if s.isRunning { focus = .terminal }
+                        }
                     }
                 }
                 .frame(maxHeight: .infinity)
@@ -95,10 +95,30 @@ struct SessionView: View {
             terminal.stop()
         }
         .onChange(of: tab) { _, newTab in
-            terminal.debounceNanos = newTab == .terminal ? 150_000_000 : 600_000_000
-            terminal.setFit(newTab == .terminal && termFit)
+            terminal.debounceNanos = newTab == .terminal ? 400_000_000 : 800_000_000
+            terminal.setVisible(newTab == .terminal)
             focus = nil
             Haptics.selection()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            switch phase {
+            case .background:
+                wasInBackground = true
+            case .active:
+                if wasInBackground {
+                    // iOS suspended the sockets: attach again for a fresh snapshot.
+                    wasInBackground = false
+                    terminal.resume()
+                }
+            default:
+                break
+            }
+        }
+        .onChange(of: store.clientGeneration) { _, _ in
+            // The app switched to another address of this PC.
+            transcript.stop()
+            terminal.stop()
+            startStreams()
         }
         .onChange(of: session?.isRunning ?? false) { wasRunning, running in
             if running && !wasRunning {
@@ -132,21 +152,12 @@ struct SessionView: View {
         }
     }
 
-    private var fitBinding: Binding<Bool> {
-        Binding(get: { termFit }, set: { on in
-            termFit = on
-            terminal.setFit(on)
-        })
-    }
-
     private func startStreams() {
         guard let c = store.client else { return }
         let running = session?.isRunning ?? false
-        terminal.debounceNanos = tab == .terminal ? 150_000_000 : 600_000_000
+        terminal.debounceNanos = tab == .terminal ? 400_000_000 : 800_000_000
+        terminal.setVisible(tab == .terminal)
         terminal.start(client: c, sessionID: sessionID, running: running)
-        if tab == .terminal && termFit {
-            terminal.setFit(true)
-        }
         if session?.isAgent ?? true {
             transcript.start(client: c, sessionID: sessionID)
         }
@@ -335,7 +346,7 @@ struct SessionView: View {
             }
             if let menu = screen?.menu, let options = menu.options, !options.isEmpty, s.isRunning,
                !pending.contains(where: { $0.kind == "question" && !($0.options ?? []).isEmpty }) {
-                MenuChoices(title: menu.title, options: options) { option in
+                MenuChoices(menu: menu, options: options) { option in
                     Haptics.approve()
                     act {
                         let err = await store.chooseMenu(sessionID, number: option.number, label: option.label)
@@ -554,16 +565,23 @@ struct SessionView: View {
 
 /// Options of a menu the agent shows in its terminal, as buttons.
 struct MenuChoices: View {
-    let title: String?
+    let menu: ScreenMenu
     let options: [MenuOption]
     let onChoose: (MenuOption) -> Void
 
+    private var title: String? { menu.title }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text((title ?? "").isEmpty ? "The agent is asking" : title!)
-                .font(.aigo(.footnote))
-                .foregroundStyle(Theme.coralText)
-                .lineLimit(3)
+            VStack(alignment: .leading, spacing: 3) {
+                Text((title ?? "").isEmpty ? "The agent is asking" : title!)
+                    .font(.aigo(.footnote))
+                    .foregroundStyle(Theme.coralText)
+                    .lineLimit(3)
+                if let note = menu.guidance {
+                    MenuNote(text: note)
+                }
+            }
             if options.count > 4 {
                 ScrollView {
                     optionList
@@ -583,10 +601,10 @@ struct MenuChoices: View {
                 Button {
                     onChoose(option)
                 } label: {
-                    Text(option.label)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    MenuOptionLabel(label: option.label, recommended: menu.isRecommended(option))
                 }
                 .buttonStyle(SecondaryButtonStyle(alignment: .leading))
+                .accessibilityHint(menu.isRecommended(option) ? Text("Recommended") : Text(""))
             }
         }
     }
@@ -785,5 +803,43 @@ struct ChangesView: View {
         guard let c = store.client else { return }
         let d = (try? await c.gitDiff(cwd: cwd, path: path)) ?? ""
         diffs[path] = d.isEmpty ? "(no textual diff — new or binary file)" : d
+    }
+}
+
+/// One muted line of guidance under a menu's question (issue #6).
+struct MenuNote: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.aigo(.caption))
+            .foregroundStyle(Theme.secondary)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .accessibilityLabel(Text("Note: \(text)"))
+    }
+}
+
+/// A menu option's label, with a small "recommended" tag (never preselected).
+struct MenuOptionLabel: View {
+    let label: String
+    let recommended: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(label)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if recommended {
+                Text("recommended")
+                    .font(.aigo(size: 10, .semibold))
+                    .foregroundStyle(Theme.lime)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .overlay(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
+                        .strokeBorder(Theme.lime.opacity(0.45), lineWidth: 1))
+            }
+        }
     }
 }

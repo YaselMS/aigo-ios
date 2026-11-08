@@ -17,7 +17,7 @@ xcodebuild -project Aigo.xcodeproj -scheme Aigo -configuration Release \
 ```
 
 - Spec: `ios/project.yml`; project `Aigo`; scheme `Aigo` (builds both targets).
-- App target `Aigo` (bundle id `dev.aigo.app`, iOS 17, iPhone, 0.3.0; CI sets the build number).
+- App target `Aigo` (bundle id `dev.aigo.app`, iOS 17, iPhone, 0.3.2; CI sets the build number).
 - Widget extension `AigoWidgets` (`dev.aigo.app.widgets`), embedded in the app:
   Live Activity on the Lock Screen and in the Dynamic Island.
 - Swift 5 language mode, minimal concurrency checking. No signing settings,
@@ -43,8 +43,10 @@ Aigo/
   App/       AigoApp (entry), RootView (navigation), NotificationManager
   Model/     Codable mirrors of the host JSON, pairing link parsing, status wording, timeline events
   Net/       PinnedSessionDelegate (cert pin), APIClient (REST + error causes), LiveSocket (WS + reconnect)
-  Store/     AppStore (state, events, digest, actions), TranscriptModel (chat WS),
-             TerminalModel (attach WS), HostVault (Keychain)
+  Store/     AppStore (state, events, digest, actions, address failover), TranscriptModel (chat WS),
+             TerminalModel (attach WS: size/snapshot protocol), HostVault (Keychain),
+             UpdateChecker (latest GitHub release, Signulous hand-off)
+  Terminal/  VTEmulator (VT/xterm emulator with scrollback), TerminalCanvas (UIKit renderer)
   Live/      LiveActivityController, IntentActions (app side of the island buttons)
   Views/     Home (the board: Needs you / Working / Review / Done tabs), AttentionCard + SessionCard,
              Session (Chat | Terminal | Changes), Search, NewWork, Pair, QR, Settings (Appearance)
@@ -69,11 +71,13 @@ long-press for more). The header's host pill switches PCs and pairs another.
 ## Pairing and trust
 
 1. On the PC: Aigo → Settings → Remote access → Pair a device. It shows a QR
-   code / link `aigo://pair?h=<host:port>&fp=<sha256>&c=<code>&n=<name>`.
+   code / link `aigo://pair?h=<host:port>&a=<host:port,...>&fp=<sha256>&c=<code>&n=<name>`
+   (`a=`: every address of the PC, best first: LAN, then Tailscale IP and MagicDNS name).
 2. On the phone: scan the QR code, tap the link (the app registers the `aigo`
    URL scheme), paste it, or type address + 6-digit code + fingerprint.
-3. The app calls `POST /api/v1/pairing/complete {code, name, platform:"ios"}`
-   over TLS and stores `{addr, fingerprint, token, hostId, hostName}` as one
+3. The app tries the addresses in order (about 3 s each, the pinned
+   fingerprint on every one), calls `POST /api/v1/pairing/complete {code, name, platform:"ios"}`
+   through the first that answers and stores `{addr, addrs, fingerprint, token, hostId, hostName}` as one
    JSON blob in the Keychain (`kSecClassGenericPassword`, service
    `dev.aigo.app`). If the Keychain is unavailable (some sideloading setups),
    it falls back to a file-protected JSON file in Application Support.
@@ -85,14 +89,35 @@ accepts the connection only when it equals the paired fingerprint. One
 request carries `Authorization: Bearer <token>`; WebSockets also offer the
 `aigo.v1` subprotocol.
 
+The address list is refreshed from host info (`remote.endpoints` in the
+`/events` snapshot). When the saved address stops answering (another
+network), the app tries the others in order and switches to the first that
+answers; Settings → Connection shows the address in use. Errors mention
+Tailscale when the PC is not on the same network (see the host's
+`docs/REMOTE.md`).
+
+## Updates
+
+The app checks `GET https://api.github.com/repos/YaselMS/aigo-ios/releases/latest`
+at most every 6 hours (cached). When the tag is newer than the app's version,
+Settings → About and a dismissible banner on Home show "Update available: vX".
+Its button copies `https://github.com/YaselMS/aigo-ios/releases/download/<tag>/Aigo-unsigned.ipa`
+and opens signulous.com: paste the link in Signulous → Upload IPA from URL.
+
 ## Known limits (v1)
 
-- **Terminal** streams `WS /sessions/{id}/attach`. Output frames trigger a
-  debounced (150 ms; 600 ms on Chat) refresh of `GET /screen`, which is the
-  host's VT emulator render, so TUIs draw correctly without a VT parser on
-  the phone. Typed lines and the key bar go back as raw bytes over the
-  socket (falls back to `POST /input`). "Fit width" sends `resize` to match
-  the phone and restores the PC's size when you leave. No colours yet.
+- **Terminal** streams `WS /sessions/{id}/attach?history=1000` into a local VT
+  emulator (`Terminal/VTEmulator.swift`, colours and scrollback) following the
+  host's size/snapshot protocol (host `docs/API.md` §6): every `size` message
+  resizes the emulator to the PTY's cols×rows first, then the snapshot frames
+  up to `replayed` redraw it; no input is sent in between and nothing is
+  replayed from a local cache (returning from the background re-attaches).
+  "PC size" sends `resize` with `mode:"view"` and scales the text to the PC's
+  width; "Fit to phone" (also chosen by typing, unless PC size was picked)
+  sends `mode:"interactive"`. Size reports are debounced (keyboard, rotation).
+  The view keeps your scroll position unless you are at the bottom.
+  `GET /screen` is still polled for the on-screen menu. Wide characters
+  (CJK, emoji) can be misaligned in host snapshots (host limitation).
 - **Background**: iOS suspends the socket shortly after the app leaves the
   foreground. The app reconnects and re-snapshots when it becomes active.
   There is no remote push; use the host's ntfy notifications for alerts while

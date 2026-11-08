@@ -271,11 +271,19 @@ struct SessionCard: View {
                      sessionID: session.id)
             switch column {
             case .ask:
-                if let options = menu?.options, !options.isEmpty {
+                if let menu = menu, let options = menu.options, !options.isEmpty {
+                    if let note = menu.guidance {
+                        MenuNote(text: note)
+                    }
                     VStack(spacing: 6) {
                         ForEach(options) { option in
-                            Button(option.label) { choose(option) }
-                                .buttonStyle(SecondaryButtonStyle(alignment: .leading))
+                            Button {
+                                choose(option)
+                            } label: {
+                                MenuOptionLabel(label: option.label, recommended: menu.isRecommended(option))
+                            }
+                            .buttonStyle(SecondaryButtonStyle(alignment: .leading))
+                            .accessibilityHint(menu.isRecommended(option) ? Text("Recommended") : Text(""))
                         }
                     }
                 } else {

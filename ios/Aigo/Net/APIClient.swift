@@ -34,7 +34,7 @@ struct APIError: LocalizedError {
             case .timedOut:
                 return "Timed out reaching the PC."
             case .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed:
-                return "Can't reach the PC at this address. Same Wi-Fi or Tailscale? Is remote access on?"
+                return "Can't reach the PC at this address. \(ConnectionProblem.tailscaleHint)"
             case .notConnectedToInternet, .networkConnectionLost:
                 return "No network connection."
             default:
@@ -55,6 +55,39 @@ struct ConnectionProblem: Equatable {
         message: "This iPhone was removed from the PC — pair again.", needsRepair: true)
     static let certificateChanged = ConnectionProblem(
         message: "This PC's certificate changed — pair again.", needsRepair: true)
+
+    static let tailscaleHint = "Not on the same network — if this PC uses Tailscale, turn on Tailscale on this iPhone."
+
+    /// No address of the PC answered.
+    static func unreachable(_ label: String, addresses: [String]) -> ConnectionProblem {
+        let anyTailscale = addresses.contains { HostAddress.isTailscale($0) }
+        let anyLAN = addresses.contains { HostAddress.isLAN($0) }
+        var parts: [String] = []
+        if addresses.count > 1 {
+            parts.append("Can't reach \(label) at any of its \(addresses.count) addresses.")
+        } else {
+            parts.append("Can't reach \(label) at \(addresses.first ?? "its address").")
+        }
+        if anyTailscale {
+            parts.append("Not on the same network — turn on Tailscale on this iPhone and check that the PC shows as online in the Tailscale app.")
+        } else {
+            parts.append(tailscaleHint)
+        }
+        if anyLAN {
+            parts.append("On the same Wi-Fi: allow iPhone Settings → Aigo → Local Network.")
+        }
+        parts.append("Also check that the PC is on, Aigo runs there and Windows firewall allows it.")
+        return ConnectionProblem(message: parts.joined(separator: " "))
+    }
+}
+
+/// Result of a quick reachability check of one address.
+enum ProbeResult {
+    /// The PC answered with the pinned certificate.
+    case reachable
+    /// Something answered, but with another certificate (another device at that address).
+    case wrongPC
+    case unreachable(Error)
 }
 
 enum HostAddress {
@@ -85,6 +118,15 @@ enum HostAddress {
         default: return false
         }
     }
+
+    /// Tailscale address: 100.64.0.0/10 or a MagicDNS name (*.ts.net).
+    static func isTailscale(_ addr: String) -> Bool {
+        let h = host(addr).lowercased()
+        if h.hasSuffix(".ts.net") { return true }
+        let parts = h.split(separator: ".").compactMap { Int($0) }
+        guard parts.count == 4 else { return false }
+        return parts[0] == 100 && (64...127).contains(parts[1])
+    }
 }
 
 /// REST + WebSocket access to one paired host over pinned TLS.
@@ -97,7 +139,7 @@ final class APIClient: @unchecked Sendable {
     let session: URLSession
     private let delegate: PinnedSessionDelegate
 
-    init(addr: String, fingerprint: String, token: String, hostName: String = "") {
+    init(addr: String, fingerprint: String, token: String, hostName: String = "", timeout: TimeInterval = 45) {
         self.addr = addr
         self.hostName = hostName
         self.fingerprint = CertificatePin.normalize(fingerprint)
@@ -105,7 +147,7 @@ final class APIClient: @unchecked Sendable {
         let delegate = PinnedSessionDelegate(fingerprint: fingerprint)
         self.delegate = delegate
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 45
+        config.timeoutIntervalForRequest = timeout
         config.waitsForConnectivity = false
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
         config.urlCache = nil
@@ -212,9 +254,12 @@ final class APIClient: @unchecked Sendable {
         case .notConnectedToInternet, .networkConnectionLost, .cannotConnectToHost, .timedOut,
              .cannotFindHost, .dnsLookupFailed:
             if HostAddress.isLAN(addr) {
-                return ConnectionProblem(message: "Can't reach \(hostLabel). Check: same Wi-Fi as the PC; iPhone Settings → Aigo → Local Network is on; Windows firewall allows Aigo on this network (Private).")
+                return ConnectionProblem(message: "Can't reach \(hostLabel) at \(addr). \(ConnectionProblem.tailscaleHint) On the same Wi-Fi, check: iPhone Settings → Aigo → Local Network is on; Windows firewall allows Aigo on this network (Private).")
             }
-            return ConnectionProblem(message: "Can't reach \(hostLabel) at \(addr). Check: the PC is on and Aigo is running; Tailscale (or your VPN) is connected on both devices; Windows firewall allows Aigo.")
+            if HostAddress.isTailscale(addr) {
+                return ConnectionProblem(message: "Can't reach \(hostLabel) over Tailscale (\(addr)). Turn on Tailscale on this iPhone and check that the PC shows as online in the Tailscale app; Aigo must be running on the PC.")
+            }
+            return ConnectionProblem(message: "Can't reach \(hostLabel) at \(addr). \(ConnectionProblem.tailscaleHint) Also check: the PC is on and Aigo is running; Windows firewall allows Aigo.")
         case .cancelled:
             return ConnectionProblem(message: "The connection to \(hostLabel) was cancelled.")
         case .secureConnectionFailed, .serverCertificateUntrusted, .serverCertificateHasBadDate,
@@ -236,6 +281,35 @@ final class APIClient: @unchecked Sendable {
         let task = session.webSocketTask(with: req)
         task.maximumMessageSize = 64 << 20
         return task
+    }
+
+    // MARK: - Reachability
+
+    /// Seconds per address when trying several (docs/API.md §7: about 3 s).
+    static let probeTimeout: TimeInterval = 3.5
+
+    /// Quick check that `addr` answers with the pinned certificate. Any HTTP
+    /// answer counts (a 401 is handled by the normal connection).
+    static func probe(addr: String, fingerprint: String, token: String) async -> ProbeResult {
+        let client = APIClient(addr: addr, fingerprint: fingerprint, token: token, timeout: probeTimeout)
+        defer { client.invalidate() }
+        guard let target = try? client.url("/api/v1/info") else {
+            return .unreachable(APIError(status: 0, message: "Invalid PC address: \(addr)"))
+        }
+        var req = URLRequest(url: target)
+        req.timeoutInterval = probeTimeout
+        if !token.isEmpty {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        do {
+            let (_, response) = try await client.session.data(for: req)
+            return response is HTTPURLResponse ? .reachable : .unreachable(URLError(.badServerResponse))
+        } catch {
+            if client.delegate.lastMismatch != nil {
+                return .wrongPC
+            }
+            return .unreachable(error)
+        }
     }
 
     // MARK: - Pairing

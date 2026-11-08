@@ -1,20 +1,20 @@
 import SwiftUI
 import UIKit
 
-/// Live terminal pane: the host-rendered VT screen, refreshed from the attach
-/// stream, plus a small status strip (live / reconnecting, fit, text size).
+/// Live terminal pane: the session's terminal drawn by the local emulator,
+/// plus a status strip (live / reconnecting, PC size vs Fit to phone, text
+/// size and copy).
 struct TerminalPane: View {
     @ObservedObject var model: TerminalModel
     @Binding var fontSize: Double
-    @Binding var fit: Bool
+    var onTap: () -> Void = {}
 
     var body: some View {
         VStack(spacing: 0) {
             strip
             Rectangle().fill(Theme.lineSoft).frame(height: 1)
-            TerminalScreen(text: model.screen?.text,
-                           fontSize: CGFloat(fontSize),
-                           onGrid: { cols, rows in model.setPhoneSize(cols: cols, rows: rows) })
+            TerminalCanvas(model: model, fontSize: CGFloat(fontSize), onTap: onTap)
+                .background(Theme.codeBg)
         }
         .background(Theme.codeBg)
     }
@@ -29,123 +29,109 @@ struct TerminalPane: View {
                 .font(Theme.monoCaption)
                 .foregroundStyle(Theme.secondary)
                 .lineLimit(1)
+                .truncationMode(.tail)
             Spacer(minLength: 4)
-            Button {
-                Haptics.selection()
-                fit.toggle()
-            } label: {
-                Label(fit ? "Fitted" : "Fit width", systemImage: fit ? "arrow.left.and.right.square.fill" : "arrow.left.and.right.square")
-                    .font(Theme.monoCaption)
-                    .foregroundStyle(fit ? Theme.lime : Theme.text)
-                    .frame(minHeight: 36)
-                    .padding(.horizontal, 6)
-                    .contentShape(Rectangle())
+            if !model.exited {
+                sizeToggle
             }
-            .buttonStyle(.plain)
-            .disabled(model.exited)
-            .accessibilityHint(Text("Resizes the terminal on the PC to fit this phone"))
             Menu {
-                Button {
-                    fontSize = min(fontSize + 1, 18)
-                } label: {
-                    Label("Larger text", systemImage: "textformat.size.larger")
+                Section("Text size") {
+                    Button {
+                        fontSize = min(fontSize + 1, 18)
+                    } label: {
+                        Label("Larger text", systemImage: "textformat.size.larger")
+                    }
+                    Button {
+                        fontSize = max(fontSize - 1, 8)
+                    } label: {
+                        Label("Smaller text", systemImage: "textformat.size.smaller")
+                    }
+                    Button {
+                        fontSize = 12
+                    } label: {
+                        Label("Default size", systemImage: "arrow.uturn.backward")
+                    }
                 }
-                Button {
-                    fontSize = max(fontSize - 1, 8)
-                } label: {
-                    Label("Smaller text", systemImage: "textformat.size.smaller")
-                }
-                Button {
-                    fontSize = 12
-                } label: {
-                    Label("Default size", systemImage: "arrow.uturn.backward")
+                Section {
+                    Button {
+                        UIPasteboard.general.string = model.screenText()
+                        Haptics.success()
+                    } label: {
+                        Label("Copy screen", systemImage: "doc.on.doc")
+                    }
+                    Button {
+                        UIPasteboard.general.string = model.allText()
+                        Haptics.success()
+                    } label: {
+                        Label("Copy screen and history", systemImage: "doc.on.clipboard")
+                    }
+                    if !model.exited {
+                        Button {
+                            model.refreshSnapshot()
+                        } label: {
+                            Label("Redraw", systemImage: "arrow.clockwise")
+                        }
+                    }
                 }
             } label: {
                 Image(systemName: "textformat.size")
                     .font(.aigo(.footnote, .semibold))
                     .foregroundStyle(Theme.text)
-                    .frame(width: 44, height: 36)
+                    .frame(width: 40, height: 36)
                     .contentShape(Rectangle())
             }
-            .accessibilityLabel(Text("Text size"))
+            .accessibilityLabel(Text("Text size and copy"))
         }
         .padding(.leading, 14)
-        .padding(.trailing, 6)
+        .padding(.trailing, 4)
         .background(Theme.bg)
+    }
+
+    /// "PC size" (watch at the PC's size, scaled) vs "Fit to phone" (the PC's
+    /// terminal takes this phone's size).
+    private var sizeToggle: some View {
+        HStack(spacing: 0) {
+            segment("PC size", on: model.choice == .pc, hint: "Keeps the PC's terminal size; the text is scaled to fit") {
+                model.choose(.pc)
+            }
+            segment("Fit to phone", on: model.choice == .phone, hint: "Resizes the terminal on the PC to fit this phone") {
+                model.choose(.phone)
+            }
+        }
+        .padding(2)
+        .background(Theme.softWhite, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+    }
+
+    private func segment(_ title: String, on: Bool, hint: String, action: @escaping () -> Void) -> some View {
+        Button {
+            Haptics.selection()
+            action()
+        } label: {
+            Text(title)
+                .font(.aigo(.caption, on ? .semibold : .regular))
+                .foregroundStyle(on ? Theme.bg : Theme.text)
+                .lineLimit(1)
+                .fixedSize()
+                .padding(.horizontal, 8)
+                .frame(minHeight: 30)
+                .background(on ? Theme.text : Color.clear,
+                            in: RoundedRectangle(cornerRadius: Theme.radius - 1, style: .continuous))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(on ? [.isSelected, .isButton] : .isButton)
+        .accessibilityHint(Text(hint))
     }
 
     private var stateText: String {
         if model.exited { return "exited · read-only" }
-        if model.live { return "live" }
+        if model.live {
+            if let s = model.ptySize {
+                return model.owner ? "live · \(s.cols)×\(s.rows)" : "live · PC \(s.cols)×\(s.rows)"
+            }
+            return "live"
+        }
         if let p = model.problem { return "reconnecting · \(p)" }
         return "connecting…"
-    }
-}
-
-/// Monospaced render of the screen text. Reports how many columns/rows of
-/// the current font fit, for "Fit width".
-struct TerminalScreen: View {
-    let text: String?
-    var fontSize: CGFloat = 12
-    var onGrid: ((Int, Int) -> Void)? = nil
-
-    var body: some View {
-        GeometryReader { geo in
-            ScrollView([.vertical, .horizontal]) {
-                Group {
-                    if let text = text {
-                        Text(TerminalScreen.clean(text))
-                            .foregroundStyle(Theme.text)
-                    } else {
-                        HStack(spacing: 8) {
-                            ProgressView().controlSize(.small)
-                            Text("Loading the screen…")
-                                .foregroundStyle(Theme.secondary)
-                        }
-                    }
-                }
-                .font(.custom(TerminalScreen.fontName, fixedSize: fontSize))
-                .textSelection(.enabled)
-                .fixedSize(horizontal: true, vertical: true)
-                .padding(10)
-                .frame(minWidth: geo.size.width, minHeight: geo.size.height, alignment: .bottomLeading)
-            }
-            .defaultScrollAnchor(.bottomLeading)
-            .onAppear { report(geo.size) }
-            .onChange(of: geo.size) { _, size in report(size) }
-            .onChange(of: fontSize) { _, _ in report(geo.size) }
-        }
-    }
-
-    private func report(_ size: CGSize) {
-        guard let onGrid = onGrid, size.width > 40, size.height > 40 else { return }
-        let font = UIFont(name: TerminalScreen.fontName, size: fontSize)
-            ?? UIFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
-        let cell = ("M" as NSString).size(withAttributes: [.font: font])
-        guard cell.width > 0, font.lineHeight > 0 else { return }
-        let cols = Int((size.width - 20) / cell.width)
-        let rows = Int((size.height - 20) / font.lineHeight)
-        onGrid(cols, rows)
-    }
-
-    /// The chosen UI font, or JetBrains Mono when that font lacks terminal glyphs.
-    static var fontName: String {
-        AigoAppearance.current.family.terminalFamily.postScriptName(.regular)
-    }
-
-    /// Trims trailing spaces per line and trailing blank lines.
-    static func clean(_ raw: String) -> String {
-        if raw.isEmpty { return "Waiting for output…" }
-        var lines = raw.components(separatedBy: "\n").map { line -> String in
-            var l = Substring(line)
-            while let last = l.last, last == " " || last == "\t" || last == "\r" {
-                l = l.dropLast()
-            }
-            return String(l)
-        }
-        while let last = lines.last, last.isEmpty {
-            lines.removeLast()
-        }
-        return lines.joined(separator: "\n")
     }
 }

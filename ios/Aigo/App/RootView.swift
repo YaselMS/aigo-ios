@@ -3,6 +3,7 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject private var store: AppStore
     @EnvironmentObject private var appearance: AppearanceStore
+    @EnvironmentObject private var updates: UpdateChecker
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -71,6 +72,9 @@ struct RootView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             store.scenePhaseChanged(phase)
+            if phase == .active {
+                Task { await updates.checkIfDue() }
+            }
         }
     }
 }

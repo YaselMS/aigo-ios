@@ -162,6 +162,21 @@ struct ScreenMenu: Codable, Equatable {
     var title: String?
     var options: [MenuOption]?
     var selected: Int?
+    /// One short sentence of guidance for dialogs Aigo knows (issue #6).
+    var note: String?
+    /// 0-based index into `options` of the option Aigo recommends (issue #6).
+    var recommended: Int?
+
+    /// `note`, trimmed, or nil.
+    var guidance: String? {
+        let n = (note ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return n.isEmpty ? nil : n
+    }
+
+    func isRecommended(_ option: MenuOption) -> Bool {
+        guard let r = recommended, let list = options, r >= 0, r < list.count else { return false }
+        return list[r] == option
+    }
 }
 
 /// GET /api/v1/sessions/{id}/screen
@@ -222,6 +237,36 @@ struct HostInfo: Codable {
     var hostId: String?
     var version: String?
     var fingerprint: String?
+    var remote: RemoteInfo?
+}
+
+/// Host info `remote` (docs/API.md §7).
+struct RemoteInfo: Codable {
+    var enabled: Bool?
+    var port: String?
+    /// Every reachable host:port, best first (v0.4 hosts).
+    var endpoints: [String]?
+    var tailscale: TailscaleInfo?
+
+    private enum CodingKeys: String, CodingKey { case enabled, port, endpoints, tailscale }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try? c.decodeIfPresent(Bool.self, forKey: .enabled)
+        // Be lenient: port may be a number or a string.
+        if let s = try? c.decodeIfPresent(String.self, forKey: .port) {
+            port = s
+        } else if let n = try? c.decodeIfPresent(Int.self, forKey: .port) {
+            port = String(n)
+        }
+        endpoints = try? c.decodeIfPresent([String].self, forKey: .endpoints)
+        tailscale = try? c.decodeIfPresent(TailscaleInfo.self, forKey: .tailscale)
+    }
+}
+
+struct TailscaleInfo: Codable {
+    var ip: String?
+    var dnsName: String?
 }
 
 /// data of the first `snapshot` event on /api/v1/events.
@@ -271,6 +316,13 @@ struct AttachFrame: Decodable {
     var type: String
     var session: SessionInfo?
     var code: Int?
+    // `size` (docs/API.md §6, v0.4 hosts)
+    var cols: Int?
+    var rows: Int?
+    var owner: Bool?
+    var mode: String?
+    var reason: String?
+    var replay: Bool?
 }
 
 /// POST /api/v1/pairing/complete response.

@@ -140,6 +140,13 @@ jobs:
           xcodebuild -version
           xcodebuild -showsdks | grep -i iphoneos || true
 
+      - name: Terminal emulator self-test
+        shell: bash
+        run: |
+          set -euo pipefail
+          swiftc -O -o "$RUNNER_TEMP/vt-selftest" ios/Aigo/Terminal/VTEmulator.swift scripts/vt-selftest/main.swift
+          "$RUNNER_TEMP/vt-selftest"
+
       - name: Install XcodeGen and xcbeautify
         shell: bash
         run: |
