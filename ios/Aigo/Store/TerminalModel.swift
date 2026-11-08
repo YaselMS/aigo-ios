@@ -150,6 +150,7 @@ final class TerminalModel: ObservableObject {
             return
         }
         resetConnectionState()
+        live = false
         s.restart()
         scheduleRefresh(immediate: true)
     }
