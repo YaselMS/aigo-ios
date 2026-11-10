@@ -8,17 +8,41 @@ struct DesktopInfo: Decodable, Equatable {
     var maxFps: Int?
     var quality: Int?
     var maxWidth: Int?
-    /// Not sent by current hosts (primary monitor only). Read if a host adds it.
+    /// Hosts with `desktop.monitors` (API §7d); id 0 is the primary.
     var monitors: [DesktopMonitor]?
+    /// Hosts with `desktop.control`: may this device control the PC?
+    var control: DesktopControl?
+}
+
+/// `control` in desktop info / the stream (API §7d).
+struct DesktopControl: Decodable, Equatable {
+    var allowed: Bool
+    var reason: String?
 }
 
 struct DesktopMonitor: Decodable, Equatable, Identifiable {
     var index: Int
     var name: String?
+    var x: Int?
+    var y: Int?
     var width: Int?
     var height: Int?
     var primary: Bool?
     var id: Int { index }
+
+    private enum CodingKeys: String, CodingKey { case id, index, name, x, y, width, height, primary }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        // `id` and `index` are the same number; older builds sent only `index`.
+        index = try c.decodeIfPresent(Int.self, forKey: .id) ?? c.decodeIfPresent(Int.self, forKey: .index) ?? 0
+        name = try c.decodeIfPresent(String.self, forKey: .name)
+        x = try c.decodeIfPresent(Int.self, forKey: .x)
+        y = try c.decodeIfPresent(Int.self, forKey: .y)
+        width = try c.decodeIfPresent(Int.self, forKey: .width)
+        height = try c.decodeIfPresent(Int.self, forKey: .height)
+        primary = try c.decodeIfPresent(Bool.self, forKey: .primary)
+    }
 
     var label: String {
         var s = name?.isEmpty == false ? name! : "Monitor \(index + 1)"
@@ -82,6 +106,9 @@ final class DesktopModel: ObservableObject {
     @Published var control = false {
         didSet { if !control { releaseAll() } }
     }
+    /// The PC lets this device control it (API §7d). Viewing always works.
+    @Published private(set) var controlAllowed = true
+    @Published private(set) var controlReason: String?
     @Published var trackpad = false
     /// While controlling: one finger pans/zooms the picture instead of the mouse.
     @Published var panLock = false
@@ -91,10 +118,15 @@ final class DesktopModel: ObservableObject {
     @Published var maxWidth = 1600 { didSet { sendConfig() } }
     @Published var quality = 60 { didSet { sendConfig() } }
     @Published var targetFps = 8 { didSet { sendConfig() } }
-    @Published var monitor = 0 { didSet { if monitor != oldValue { sendConfig() } } }
+    @Published var monitor = 0 { didSet { if monitor != oldValue && !applyingHost { sendConfig() } } }
 
     /// Set by the picture view; called for each decoded frame.
     var onFrame: ((UIImage) -> Void)?
+    /// Set by the picture view: the PC's real pointer (normalized over the
+    /// selected monitor), from `cursor` messages. Not published (30 Hz).
+    var onCursor: ((CGPoint, Bool) -> Void)?
+    private(set) var hostCursor: CGPoint?
+    private var applyingHost = false
 
     private var client: APIClient?
     private var socket: LiveSocket?
@@ -166,6 +198,7 @@ final class DesktopModel: ObservableObject {
             let i = try await client.get("/api/v1/desktop/info", as: DesktopInfo.self)
             guard running, self.client === client else { return }
             info = i
+            if let c = i.control { applyControl(c) }
             if let bad = DesktopModel.unavailability(i) {
                 phase = bad
                 return
@@ -269,6 +302,25 @@ final class DesktopModel: ObservableObject {
         var srcW: Int?
         var srcH: Int?
         var error: String?
+        // info / control (API §7d)
+        var monitors: [DesktopMonitor]?
+        var monitor: Int?
+        var control: DesktopControl?
+        var allowed: Bool?
+        var reason: String?
+        var maxFps: Int?
+        // cursor
+        var x: Double?
+        var y: Double?
+        var onMonitor: Bool?
+        var visible: Bool?
+    }
+
+    private func applyControl(_ c: DesktopControl) {
+        if controlAllowed != c.allowed { controlAllowed = c.allowed }
+        let r = c.allowed ? nil : c.reason
+        if controlReason != r { controlReason = r }
+        if !c.allowed && control { control = false }
     }
 
     private func handleText(_ data: Data) {
@@ -282,6 +334,26 @@ final class DesktopModel: ObservableObject {
             if let w = m.w, let h = m.h, w > 0, h > 0 {
                 let s = CGSize(width: w, height: h)
                 if s != frameSize { frameSize = s }
+            }
+        case "info":
+            var i = info ?? DesktopInfo()
+            if let list = m.monitors { i.monitors = list }
+            if let f = m.maxFps { i.maxFps = f }
+            if let c = m.control { i.control = c; applyControl(c) }
+            if i != info { info = i }
+            if let sel = m.monitor, sel != monitor {
+                // The host's choice (e.g. fell back to the primary): adopt it without echoing.
+                applyingHost = true
+                monitor = sel
+                applyingHost = false
+            }
+        case "control":
+            if let a = m.allowed { applyControl(DesktopControl(allowed: a, reason: m.reason)) }
+        case "cursor":
+            if let x = m.x, let y = m.y {
+                let p = CGPoint(x: x, y: y)
+                hostCursor = p
+                onCursor?(p, (m.onMonitor ?? true) && (m.visible ?? true))
             }
         case "error":
             hostError = m.error ?? "The PC could not capture its screen."
@@ -341,7 +413,7 @@ final class DesktopModel: ObservableObject {
 
     // MARK: - Input (normalized 0…1 coordinates of the streamed screen)
 
-    var canSend: Bool { control && phase == .live }
+    var canSend: Bool { control && controlAllowed && phase == .live }
 
     private func send(_ o: [String: Any]) {
         guard canSend, let s = socket, s.isOpen else { return }

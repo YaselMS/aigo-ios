@@ -10,6 +10,9 @@ struct DesktopView: View {
     @State private var chrome = true
     @State private var confirmControl = false
     @State private var wasInBackground = false
+    /// The space between the top bar and the controls/keyboard (global coordinates).
+    @State private var freeRect: CGRect = .zero
+    @State private var fitRequest = 0
 
     var body: some View {
         ZStack {
@@ -18,7 +21,7 @@ struct DesktopView: View {
             case .unavailable(let title, let message):
                 unavailable(title: title, message: message)
             default:
-                DesktopSurface(model: model) {
+                DesktopSurface(model: model, freeRect: freeRect, fitRequest: fitRequest) {
                     withAnimation(.easeOut(duration: 0.15)) { chrome.toggle() }
                 }
                 .ignoresSafeArea()
@@ -158,12 +161,31 @@ struct DesktopView: View {
                     .padding(.horizontal, Theme.gutter)
                     .padding(.top, 6)
             }
-            Spacer(minLength: 0)
+            // The picture is fitted into this space (above the keyboard and controls, #73).
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { freeRect = geo.frame(in: .global) }
+                    .onChange(of: geo.frame(in: .global)) { _, r in freeRect = r }
+            }
+            .allowsHitTesting(false)
             if chrome && model.control {
                 controlBar
                     .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else if chrome && model.phase == .live && model.hasFrame && !model.controlAllowed {
+                Label(model.controlReason ?? "View only: this PC doesn't allow control from this device.",
+                      systemImage: "eye")
+                    .font(.aigo(.caption))
+                    .foregroundStyle(Theme.text)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color.black.opacity(0.7), in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+                    .padding(.horizontal, Theme.gutter)
+                    .padding(.bottom, 10)
+                    .allowsHitTesting(false)
             } else if chrome && model.phase == .live && model.hasFrame {
-                Text("View only · pinch to zoom · tap to hide controls")
+                Text("View only · pinch to zoom · drag to move · tap to hide controls")
                     .font(.aigo(.caption))
                     .foregroundStyle(Theme.secondary)
                     .padding(.horizontal, 10)
@@ -214,20 +236,30 @@ struct DesktopView: View {
             .accessibilityElement(children: .combine)
             Spacer(minLength: 4)
             settingsMenu
-            Button {
-                Haptics.tap()
-                if model.control {
-                    model.control = false
-                } else {
-                    confirmControl = true
+            if !model.controlAllowed {
+                Label("View only", systemImage: "eye")
+                    .font(.aigo(.caption, .semibold))
+                    .foregroundStyle(Theme.secondary)
+                    .padding(.horizontal, 10)
+                    .frame(minHeight: 36)
+                    .background(Theme.softWhite, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+                    .accessibilityLabel(Text("View only. \(model.controlReason ?? "")"))
+            } else {
+                Button {
+                    Haptics.tap()
+                    if model.control {
+                        model.control = false
+                    } else {
+                        confirmControl = true
+                    }
+                } label: {
+                    Text(model.control ? "Release" : "Take control")
                 }
-            } label: {
-                Text(model.control ? "Release" : "Take control")
+                .buttonStyle(SoftButtonStyle(tint: model.control ? Theme.coral : Theme.lime,
+                                             text: model.control ? Theme.coralButtonText : nil,
+                                             fullWidth: false, minHeight: 36))
+                .disabled(model.phase != .live && !model.control)
             }
-            .buttonStyle(SoftButtonStyle(tint: model.control ? Theme.coral : Theme.lime,
-                                         text: model.control ? Theme.coralButtonText : nil,
-                                         fullWidth: false, minHeight: 36))
-            .disabled(model.phase != .live && !model.control)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
@@ -253,6 +285,11 @@ struct DesktopView: View {
 
     private var settingsMenu: some View {
         Menu {
+            Button {
+                fitRequest += 1
+            } label: {
+                Label("Fit picture", systemImage: "arrow.down.right.and.arrow.up.left")
+            }
             Section("Monitor") {
                 if model.monitors.isEmpty {
                     Button {} label: {
@@ -340,7 +377,7 @@ struct DesktopView: View {
     }
 
     private var hint: String {
-        if model.panLock { return "Pan: drag and pinch move the picture; nothing is sent to the PC." }
+        if model.panLock { return "Pan: drag and pinch move the picture anywhere; nothing is sent to the PC. Double tap fits it." }
         if model.trackpad { return "Drag moves the pointer · tap clicks · hold then drag drags · two-finger tap right-clicks · two fingers scroll" }
         return "Tap clicks · drag drags · two-finger tap right-clicks · two fingers scroll · pinch zooms"
     }

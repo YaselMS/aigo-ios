@@ -4,15 +4,13 @@ import UIKit
 /// Update notice (issue #38): compares the app's version with the latest
 /// release of YaselMS/aigo-ios (GitHub `releases/latest`, checked at most
 /// every 6 hours, cached). iOS does not let a sideloaded app update itself,
-/// so the notice copies the IPA link and opens Signulous, where the user
-/// re-signs it ("Upload IPA from URL").
+/// so the notice shows the IPA link with Copy and Share (issue #74); the
+/// user re-signs it in their signing service. Nothing is opened automatically.
 @MainActor
 final class UpdateChecker: ObservableObject {
     static let repo = "YaselMS/aigo-ios"
     static let interval: TimeInterval = 6 * 60 * 60
-    /// Signulous has no documented URL scheme; its website is the entry point.
-    static let signulousURL = URL(string: "https://www.signulous.com")!
-    static let instructions = "Paste the link in Signulous → Upload IPA from URL."
+    static let instructions = "Copy or share the IPA link and install it with your signing service (for example Signulous → Upload IPA from URL)."
 
     /// Tag of the latest release, e.g. "v0.3.2".
     @Published private(set) var latestTag: String?
@@ -105,12 +103,11 @@ final class UpdateChecker: ObservableObject {
         defaults.set(now.timeIntervalSince1970, forKey: Key.checked)
     }
 
-    /// Copies the IPA link and opens Signulous.
-    func copyLinkAndOpenSignulous() {
+    /// Copies the IPA link. Opens nothing (issue #74).
+    func copyLink() {
         guard let url = ipaURL else { return }
         UIPasteboard.general.string = url.absoluteString
         Haptics.success()
-        UIApplication.shared.open(UpdateChecker.signulousURL)
     }
 
     private struct Release: Decodable {
@@ -137,10 +134,11 @@ final class UpdateChecker: ObservableObject {
     }
 }
 
-/// "Update available: vX" with the copy-link button and the Signulous steps.
+/// "Update available: vX" with the IPA link, Copy and Share.
 struct UpdateNotice: View {
     @EnvironmentObject private var updates: UpdateChecker
     var onDismiss: (() -> Void)? = nil
+    @State private var copied = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -169,12 +167,29 @@ struct UpdateNotice: View {
                 .font(.aigo(.footnote))
                 .foregroundStyle(Theme.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Button {
-                updates.copyLinkAndOpenSignulous()
-            } label: {
-                Label("Copy IPA link & open Signulous", systemImage: "doc.on.doc")
+            if let url = updates.ipaURL {
+                Text(url.absoluteString)
+                    .font(Theme.monoCaption)
+                    .foregroundStyle(Theme.text)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.softWhite, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+                HStack(spacing: 8) {
+                    Button {
+                        updates.copyLink()
+                        copied = true
+                    } label: {
+                        Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                    }
+                    .buttonStyle(SoftButtonStyle(tint: Theme.lime))
+                    ShareLink(item: url) {
+                        Label("Share", systemImage: "square.and.arrow.up")
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                }
             }
-            .buttonStyle(SoftButtonStyle(tint: Theme.lime))
         }
         .padding(12)
         .aigoCard()

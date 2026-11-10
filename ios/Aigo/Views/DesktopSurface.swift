@@ -1,10 +1,18 @@
 import SwiftUI
 import UIKit
 
-/// The PC screen: fitted to the view, pinch to zoom, pan when zoomed.
+/// The PC screen. Laid out in `freeRect` (the space above the keyboard and
+/// the controls, issue #73): fitted and centred there by default, re-fitted
+/// when that space changes (keyboard, rotation, controls). Once the user
+/// zooms or moves it, it stays where they put it (also at 1x, anywhere on
+/// screen) and the placement is remembered per orientation. Double tap (view
+/// only) or "Fit picture" goes back to fitted.
 /// Gestures become mouse input only while the model is in control mode.
 struct DesktopSurface: UIViewRepresentable {
     @ObservedObject var model: DesktopModel
+    /// Free space in global (window) coordinates; .zero = the whole view.
+    var freeRect: CGRect
+    var fitRequest: Int
     var onToggleChrome: () -> Void
 
     func makeUIView(context: Context) -> DesktopCanvasView {
@@ -12,25 +20,28 @@ struct DesktopSurface: UIViewRepresentable {
         v.model = model
         v.onToggleChrome = onToggleChrome
         model.onFrame = { [weak v] image in v?.show(image) }
+        model.onCursor = { [weak v] p, on in v?.hostCursor(p, onMonitor: on) }
         return v
     }
 
     func updateUIView(_ v: DesktopCanvasView, context: Context) {
         v.onToggleChrome = onToggleChrome
-        v.apply(control: model.control, trackpad: model.trackpad, panLock: model.panLock)
-        v.setKeyboard(model.keyboard && model.control)
+        v.apply(control: model.control && model.controlAllowed, trackpad: model.trackpad, panLock: model.panLock)
+        v.setKeyboard(model.keyboard && model.control && model.controlAllowed)
+        v.setFreeRect(freeRect)
+        v.fitRequest(fitRequest)
     }
 
     static func dismantleUIView(_ v: DesktopCanvasView, coordinator: ()) {
         v.model?.onFrame = nil
+        v.model?.onCursor = nil
     }
 }
 
-final class DesktopCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDelegate {
+final class DesktopCanvasView: UIView, UIGestureRecognizerDelegate {
     weak var model: DesktopModel?
     var onToggleChrome: (() -> Void)?
 
-    private let scroll = UIScrollView()
     private let imageView = UIImageView()
     private let cursor = UIImageView()
     private let keys = DesktopKeyCapture()
@@ -40,6 +51,10 @@ final class DesktopCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizer
     private var tap: UITapGestureRecognizer!
     private var doubleTap: UITapGestureRecognizer!
     private var twoTap: UITapGestureRecognizer!
+    /// Moves the picture (view only, or Pan while controlling).
+    private var movePan: UIPanGestureRecognizer!
+    /// Zooms (always) and follows the fingers (view only / Pan).
+    private var pinch: UIPinchGestureRecognizer!
     private var drag: UIPanGestureRecognizer!
     private var twoPan: UIPanGestureRecognizer!
     private var hold: UILongPressGestureRecognizer!
@@ -48,30 +63,36 @@ final class DesktopCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizer
     private var trackpad = false
     private var panLock = false
     private var imageSize: CGSize = .zero
-    /// Trackpad pointer, normalized. The PC doesn't report its real cursor,
-    /// so the first move puts it here.
+
+    /// Picture placement: scale (view points per image pixel) and top-left.
+    private var scale: CGFloat = 1
+    private var origin: CGPoint = .zero
+    /// The user zoomed or moved the picture: keep it, don't re-fit.
+    private var userPlaced = false
+    private var freeGlobal: CGRect = .zero
+    private var lastFree: CGRect = .zero
+    private var lastFitRequest = 0
+
+    /// Trackpad pointer, normalized. Follows the PC's real cursor (`cursor`
+    /// messages) except while the user moves it.
     private var pointer = CGPoint(x: 0.5, y: 0.5)
+    private var lastLocalMove = Date.distantPast
     private var lastPan: CGPoint = .zero
     private var wheelRest: CGFloat = 0
     private var zoomGesture = false
+    private var pinchTotal: CGFloat = 1
+    private var pinchCentroid: CGPoint = .zero
     private var dragging = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = UIColor(red: 0.03, green: 0.035, blue: 0.04, alpha: 1)
-        scroll.delegate = self
-        scroll.showsVerticalScrollIndicator = false
-        scroll.showsHorizontalScrollIndicator = false
-        scroll.contentInsetAdjustmentBehavior = .never
-        scroll.bouncesZoom = true
-        scroll.decelerationRate = .fast
-        scroll.delaysContentTouches = false
-        addSubview(scroll)
+        clipsToBounds = true
         imageView.contentMode = .scaleToFill
         imageView.isAccessibilityElement = true
         imageView.accessibilityLabel = "PC screen"
         imageView.layer.magnificationFilter = .linear
-        scroll.addSubview(imageView)
+        addSubview(imageView)
 
         let conf = UIImage.SymbolConfiguration(pointSize: 18, weight: .bold)
         cursor.image = UIImage(systemName: "cursorarrow", withConfiguration: conf)?
@@ -96,6 +117,9 @@ final class DesktopCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizer
         tap = UITapGestureRecognizer(target: self, action: #selector(onTap(_:)))
         twoTap = UITapGestureRecognizer(target: self, action: #selector(onTwoTap(_:)))
         twoTap.numberOfTouchesRequired = 2
+        movePan = UIPanGestureRecognizer(target: self, action: #selector(onMove(_:)))
+        movePan.maximumNumberOfTouches = 1
+        pinch = UIPinchGestureRecognizer(target: self, action: #selector(onPinch(_:)))
         drag = UIPanGestureRecognizer(target: self, action: #selector(onDrag(_:)))
         drag.minimumNumberOfTouches = 1
         drag.maximumNumberOfTouches = 1
@@ -105,100 +129,219 @@ final class DesktopCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizer
         hold = UILongPressGestureRecognizer(target: self, action: #selector(onHold(_:)))
         hold.minimumPressDuration = 0.35
         hold.allowableMovement = 12
-        for g in [doubleTap!, chromeTap!, tap!, twoTap!, drag!, twoPan!, hold!] as [UIGestureRecognizer] {
+        for g in [doubleTap!, chromeTap!, tap!, twoTap!, movePan!, pinch!, drag!, twoPan!, hold!] as [UIGestureRecognizer] {
             g.delegate = self
-            scroll.addGestureRecognizer(g)
+            addGestureRecognizer(g)
         }
         apply(control: false, trackpad: false, panLock: false, force: true)
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
     // MARK: - Picture
 
     func show(_ image: UIImage) {
         imageView.image = image
         let px = CGSize(width: image.size.width * image.scale, height: image.size.height * image.scale)
-        if px != imageSize {
-            imageSize = px
-            configureZoom(reset: true)
+        guard px != imageSize else { return }
+        let old = imageSize
+        imageSize = px
+        if old == .zero {
+            restorePlacement()
+        } else if userPlaced, old.width > 0 {
+            // New resolution or monitor: keep the shown width and place.
+            scale = scale * old.width / px.width
         }
+        layoutPicture(animated: false)
     }
 
-    private var lastBounds: CGSize = .zero
+    /// The free space in this view's coordinates.
+    private var free: CGRect {
+        guard bounds.width > 0, bounds.height > 0 else { return .zero }
+        var r = freeGlobal == .zero ? bounds : convert(freeGlobal, from: nil)
+        r = r.intersection(bounds)
+        if r.isNull || r.width < 60 || r.height < 60 { r = bounds }
+        // The keyboard while the controls are hidden (they normally report it).
+        if keyboardTop < r.maxY {
+            r.size.height = max(60, keyboardTop - r.minY)
+        }
+        return r
+    }
+
+    func setFreeRect(_ r: CGRect) {
+        guard r != freeGlobal else { return }
+        freeGlobal = r
+        setNeedsLayout()
+    }
+
+    func fitRequest(_ n: Int) {
+        guard n != lastFitRequest else { return }
+        lastFitRequest = n
+        resetToFit(animated: true)
+    }
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        scroll.frame = bounds
         keys.frame = CGRect(x: 0, y: 0, width: 1, height: 1)
-        if bounds.size != lastBounds {
-            lastBounds = bounds.size
-            configureZoom(reset: false)
+        let rotated = orientationChanged()
+        let f = free
+        if f != lastFree || rotated {
+            lastFree = f
+            if rotated { restorePlacement() }
+            layoutPicture(animated: !rotated && window != nil)
         }
         updateCursor()
+    }
+
+    private var lastLandscape: Bool?
+
+    /// The view itself turned (not just the keyboard shrinking the free space).
+    private func orientationChanged() -> Bool {
+        guard bounds.width > 0, bounds.height > 0 else { return false }
+        let landscape = bounds.width > bounds.height
+        defer { lastLandscape = landscape }
+        return lastLandscape != nil && lastLandscape != landscape
     }
 
     private func fitScale() -> CGFloat {
-        guard imageSize.width > 0, imageSize.height > 0, bounds.width > 0, bounds.height > 0 else { return 1 }
-        return min(bounds.width / imageSize.width, bounds.height / imageSize.height)
+        let f = free
+        guard imageSize.width > 0, imageSize.height > 0, f.width > 0, f.height > 0 else { return 1 }
+        return min(f.width / imageSize.width, f.height / imageSize.height)
     }
 
-    /// Fit-to-screen is the minimum zoom; the picture stays fitted when the
-    /// phone rotates unless the user had zoomed in.
-    private func configureZoom(reset: Bool) {
-        guard imageSize.width > 0 else { return }
-        let prev = scroll.zoomScale
-        let wasFitted = prev <= scroll.minimumZoomScale + 0.001
-        let fit = fitScale()
-        if reset {
-            scroll.zoomScale = 1
-            imageView.frame = CGRect(origin: .zero, size: imageSize)
-            scroll.contentSize = imageSize
-        }
-        scroll.minimumZoomScale = fit
-        scroll.maximumZoomScale = max(fit * 8, 2.5)
-        scroll.zoomScale = (reset || wasFitted) ? fit : max(prev, fit)
-        center()
-    }
+    private var minScale: CGFloat { fitScale() * 0.25 }
+    private var maxScale: CGFloat { max(fitScale() * 8, 2.5) }
 
-    private func center() {
-        let w = imageView.frame.width, h = imageView.frame.height
-        let x = max((scroll.bounds.width - w) / 2, 0)
-        let y = max((scroll.bounds.height - h) / 2, 0)
-        scroll.contentInset = UIEdgeInsets(top: y, left: x, bottom: y, right: x)
-    }
-
-    func viewForZooming(in scrollView: UIScrollView) -> UIView? { imageView }
-
-    func scrollViewDidZoom(_ scrollView: UIScrollView) {
-        center()
-        updateCursor()
-    }
-
-    func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        updateCursor()
-    }
-
-    @objc private func onDoubleTap(_ g: UITapGestureRecognizer) {
-        let p = g.location(in: imageView)
-        if scroll.zoomScale > scroll.minimumZoomScale + 0.01 {
-            scroll.setZoomScale(scroll.minimumZoomScale, animated: true)
+    /// Fitted and centred in the free space, unless the user placed it.
+    private func layoutPicture(animated: Bool) {
+        guard imageSize.width > 0, bounds.width > 0 else { return }
+        if !userPlaced {
+            let f = free
+            scale = fitScale()
+            let w = imageSize.width * scale, h = imageSize.height * scale
+            origin = CGPoint(x: f.midX - w / 2, y: f.midY - h / 2)
         } else {
-            let target = min(scroll.minimumZoomScale * 2.5, scroll.maximumZoomScale)
-            let w = scroll.bounds.width / target, h = scroll.bounds.height / target
-            scroll.zoom(to: CGRect(x: p.x - w / 2, y: p.y - h / 2, width: w, height: h), animated: true)
+            scale = min(max(scale, minScale), maxScale)
+            clampOrigin()
         }
+        let frame = CGRect(origin: origin, size: CGSize(width: imageSize.width * scale, height: imageSize.height * scale))
+        if animated && imageView.frame != .zero {
+            UIView.animate(withDuration: 0.22, delay: 0, options: [.beginFromCurrentState, .curveEaseOut]) {
+                self.imageView.frame = frame
+            } completion: { _ in self.updateCursor() }
+        } else {
+            imageView.frame = frame
+        }
+        updateCursor()
+    }
+
+    /// Anywhere on screen, but keep part of the picture visible.
+    private func clampOrigin() {
+        let w = imageSize.width * scale, h = imageSize.height * scale
+        let keep: CGFloat = 80
+        let kx = min(keep, w), ky = min(keep, h)
+        origin.x = min(max(origin.x, bounds.minX + kx - w), bounds.maxX - kx)
+        origin.y = min(max(origin.y, bounds.minY + ky - h), bounds.maxY - ky)
+    }
+
+    private func setPlacement(scale s: CGFloat, origin o: CGPoint) {
+        userPlaced = true
+        scale = min(max(s, minScale), maxScale)
+        origin = o
+        clampOrigin()
+        imageView.frame = CGRect(origin: origin, size: CGSize(width: imageSize.width * scale, height: imageSize.height * scale))
+        updateCursor()
+    }
+
+    /// Zoom by `factor` keeping the image point under `anchor` (view coords) fixed.
+    private func zoom(by factor: CGFloat, at anchor: CGPoint) {
+        let s = min(max(scale * factor, minScale), maxScale)
+        let f = s / scale
+        let o = CGPoint(x: anchor.x - (anchor.x - origin.x) * f, y: anchor.y - (anchor.y - origin.y) * f)
+        setPlacement(scale: s, origin: o)
+    }
+
+    private func resetToFit(animated: Bool) {
+        userPlaced = false
+        forgetPlacement()
+        layoutPicture(animated: animated)
+    }
+
+    // MARK: - Remembered placement (per orientation)
+
+    private var placementKey: String {
+        "desktop.placement." + (bounds.width > bounds.height ? "landscape" : "portrait")
+    }
+
+    /// Saved as zoom relative to fit plus the picture centre relative to the view.
+    private func savePlacement() {
+        guard userPlaced, imageSize.width > 0, bounds.width > 0, bounds.height > 0 else { return }
+        let fit = fitScale()
+        let cx = (origin.x + imageSize.width * scale / 2) / bounds.width
+        let cy = (origin.y + imageSize.height * scale / 2) / bounds.height
+        UserDefaults.standard.set([Double(scale / max(fit, 0.0001)), Double(cx), Double(cy)], forKey: placementKey)
+    }
+
+    private func forgetPlacement() {
+        UserDefaults.standard.removeObject(forKey: placementKey)
+    }
+
+    private func restorePlacement() {
+        guard imageSize.width > 0, bounds.width > 0 else { return }
+        guard let a = UserDefaults.standard.array(forKey: placementKey) as? [Double], a.count == 3 else {
+            userPlaced = false
+            return
+        }
+        userPlaced = true
+        scale = fitScale() * CGFloat(a[0])
+        let w = imageSize.width * scale, h = imageSize.height * scale
+        origin = CGPoint(x: CGFloat(a[1]) * bounds.width - w / 2, y: CGFloat(a[2]) * bounds.height - h / 2)
+    }
+
+    // MARK: - Keyboard (while the controls are hidden they don't report it)
+
+    private var keyboardTop: CGFloat = .greatestFiniteMagnitude
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        NotificationCenter.default.removeObserver(self)
+        guard window != nil else { return }
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardFrame(_:)),
+                                               name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardHide(_:)),
+                                               name: UIResponder.keyboardWillHideNotification, object: nil)
+    }
+
+    @objc private func keyboardFrame(_ n: Notification) {
+        guard let r = n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+        let local = convert(r, from: nil)
+        keyboardTop = local.minY < bounds.maxY - 1 && local.height > 0 ? local.minY : .greatestFiniteMagnitude
+        setNeedsLayout()
+    }
+
+    @objc private func keyboardHide(_ n: Notification) {
+        keyboardTop = .greatestFiniteMagnitude
+        setNeedsLayout()
     }
 
     // MARK: - Modes
 
     func apply(control: Bool, trackpad: Bool, panLock: Bool, force: Bool = false) {
         guard force || control != self.control || trackpad != self.trackpad || panLock != self.panLock else { return }
+        if control && trackpad && !(self.control && self.trackpad),
+           let p = model?.hostCursor, (0...1).contains(p.x), (0...1).contains(p.y) {
+            // The trackpad starts at the PC's real pointer.
+            pointer = p
+        }
         self.control = control
         self.trackpad = trackpad
         self.panLock = panLock
         let input = control && !panLock
-        scroll.panGestureRecognizer.isEnabled = !input
+        movePan.isEnabled = !input
         doubleTap.isEnabled = !input
         chromeTap.isEnabled = !input
         tap.isEnabled = input
@@ -219,6 +362,14 @@ final class DesktopCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizer
 
     private var inputOn: Bool { control && !panLock }
 
+    /// The PC's pointer moved. The trackpad pointer follows it unless the
+    /// user is moving it right now.
+    func hostCursor(_ p: CGPoint, onMonitor: Bool) {
+        guard onMonitor, Date().timeIntervalSince(lastLocalMove) > 0.4 else { return }
+        pointer = CGPoint(x: min(max(p.x, 0), 1), y: min(max(p.y, 0), 1))
+        updateCursor()
+    }
+
     // MARK: - Coordinates
 
     private func normalized(_ g: UIGestureRecognizer) -> CGPoint {
@@ -234,31 +385,111 @@ final class DesktopCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizer
     private func updateCursor() {
         cursor.isHidden = !(control && trackpad) || imageSize.width == 0
         guard !cursor.isHidden else { return }
-        let p = CGPoint(x: pointer.x * imageView.bounds.width, y: pointer.y * imageView.bounds.height)
-        let s = imageView.convert(p, to: self)
+        let f = imageView.frame
+        let s = CGPoint(x: f.minX + pointer.x * f.width, y: f.minY + pointer.y * f.height)
         let size = cursor.image?.size ?? CGSize(width: 14, height: 20)
         // The arrow's tip is near the image's top-left corner.
         cursor.frame = CGRect(x: s.x - size.width * 0.3, y: s.y - size.height * 0.15, width: size.width, height: size.height)
     }
 
-    /// Keeps the trackpad pointer in view when zoomed in.
+    /// Keeps the trackpad pointer inside the free space when zoomed in.
     private func follow() {
-        guard scroll.zoomScale > scroll.minimumZoomScale + 0.01 else { return }
-        let p = CGPoint(x: pointer.x * imageView.bounds.width, y: pointer.y * imageView.bounds.height)
-        let s = imageView.convert(p, to: scroll)
+        let f = imageView.frame
+        let fr = free
+        guard f.width > fr.width + 1 || f.height > fr.height + 1 else { return }
+        let s = CGPoint(x: f.minX + pointer.x * f.width, y: f.minY + pointer.y * f.height)
         let margin: CGFloat = 40
-        scroll.scrollRectToVisible(CGRect(x: s.x - margin, y: s.y - margin, width: margin * 2, height: margin * 2), animated: false)
+        var dx: CGFloat = 0, dy: CGFloat = 0
+        if s.x < fr.minX + margin { dx = fr.minX + margin - s.x }
+        if s.x > fr.maxX - margin { dx = fr.maxX - margin - s.x }
+        if s.y < fr.minY + margin { dy = fr.minY + margin - s.y }
+        if s.y > fr.maxY - margin { dy = fr.maxY - margin - s.y }
+        guard dx != 0 || dy != 0 else { return }
+        setPlacement(scale: scale, origin: CGPoint(x: origin.x + dx, y: origin.y + dy))
+        savePlacement()
     }
 
     // MARK: - Gestures
 
     func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
-        // The two-finger wheel runs alongside the scroll view's pinch zoom.
-        (g === twoPan && other === scroll.pinchGestureRecognizer) || (other === twoPan && g === scroll.pinchGestureRecognizer)
+        // The two-finger wheel runs alongside the pinch zoom; so does moving.
+        ((g === twoPan || g === movePan) && other === pinch) || (g === pinch && (other === twoPan || other === movePan))
     }
 
     @objc private func onChromeTap(_ g: UITapGestureRecognizer) {
         onToggleChrome?()
+    }
+
+    @objc private func onDoubleTap(_ g: UITapGestureRecognizer) {
+        guard imageSize.width > 0 else { return }
+        if userPlaced {
+            resetToFit(animated: true)
+        } else {
+            let p = g.location(in: self)
+            let target = min(fitScale() * 2.5, maxScale)
+            let f = target / scale
+            userPlaced = true
+            origin = CGPoint(x: p.x - (p.x - origin.x) * f, y: p.y - (p.y - origin.y) * f)
+            scale = target
+            layoutPicture(animated: true)
+            savePlacement()
+        }
+    }
+
+    /// One finger moves the picture (view only / Pan), with a little momentum.
+    @objc private func onMove(_ g: UIPanGestureRecognizer) {
+        guard imageSize.width > 0 else { return }
+        let t = g.translation(in: self)
+        g.setTranslation(.zero, in: self)
+        switch g.state {
+        case .changed:
+            setPlacement(scale: scale, origin: CGPoint(x: origin.x + t.x, y: origin.y + t.y))
+        case .ended:
+            let v = g.velocity(in: self)
+            let from = imageView.frame.offsetBy(dx: t.x, dy: t.y)
+            setPlacement(scale: scale, origin: CGPoint(x: origin.x + t.x + v.x * 0.12, y: origin.y + t.y + v.y * 0.12))
+            let to = imageView.frame
+            imageView.frame = from
+            UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .allowUserInteraction, .beginFromCurrentState]) {
+                self.imageView.frame = to
+            } completion: { _ in self.updateCursor() }
+            savePlacement()
+        default:
+            break
+        }
+    }
+
+    @objc private func onPinch(_ g: UIPinchGestureRecognizer) {
+        guard imageSize.width > 0 else { return }
+        let c = g.location(in: self)
+        switch g.state {
+        case .began:
+            pinchTotal = 1
+            pinchCentroid = c
+            g.scale = 1
+        case .changed:
+            pinchTotal *= g.scale
+            let factor = g.scale
+            g.scale = 1
+            if inputOn {
+                // Controlling: two fingers also scroll; zoom only once it's clearly a pinch.
+                guard abs(pinchTotal - 1) > 0.08 else { return }
+                zoomGesture = true
+                zoom(by: factor, at: c)
+            } else {
+                // Follow the fingers: move with the centroid, zoom about it.
+                if g.numberOfTouches >= 2 {
+                    origin.x += c.x - pinchCentroid.x
+                    origin.y += c.y - pinchCentroid.y
+                }
+                pinchCentroid = c
+                zoom(by: factor, at: c)
+            }
+        case .ended, .cancelled:
+            if userPlaced { savePlacement() }
+        default:
+            break
+        }
     }
 
     @objc private func onTap(_ g: UITapGestureRecognizer) {
@@ -280,12 +511,13 @@ final class DesktopCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizer
             // zoomed in): a swipe across the picture moves 1.6 screens.
             let t = g.translation(in: self)
             g.setTranslation(.zero, in: self)
-            let shown = imageView.convert(imageView.bounds, to: self)
+            let shown = imageView.frame
             let speed: CGFloat = 1.6
             let dx = t.x / max(shown.width, 1) * speed
             let dy = t.y / max(shown.height, 1) * speed
             pointer.x = min(max(pointer.x + dx, 0), 1)
             pointer.y = min(max(pointer.y + dy, 0), 1)
+            lastLocalMove = Date()
             model.move(pointer, force: g.state == .ended)
             updateCursor()
             follow()
@@ -314,6 +546,7 @@ final class DesktopCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizer
     @objc private func onHold(_ g: UILongPressGestureRecognizer) {
         guard inputOn, trackpad, let model = model else { return }
         let here = g.location(in: self)
+        lastLocalMove = Date()
         switch g.state {
         case .began:
             Haptics.tap()
@@ -321,7 +554,7 @@ final class DesktopCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizer
             model.move(pointer, force: true)
             model.button(0, down: true, at: pointer)
         case .changed:
-            let shown = imageView.convert(imageView.bounds, to: self)
+            let shown = imageView.frame
             pointer.x = min(max(pointer.x + (here.x - lastPan.x) / max(shown.width, 1) * 1.6, 0), 1)
             pointer.y = min(max(pointer.y + (here.y - lastPan.y) / max(shown.height, 1) * 1.6, 0), 1)
             lastPan = here
@@ -342,9 +575,6 @@ final class DesktopCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizer
             wheelRest = 0
             zoomGesture = false
         case .changed:
-            if let pinch = scroll.pinchGestureRecognizer, abs(pinch.scale - 1) > 0.08 {
-                zoomGesture = true
-            }
             if zoomGesture { return }
             let t = g.translation(in: self)
             g.setTranslation(.zero, in: self)

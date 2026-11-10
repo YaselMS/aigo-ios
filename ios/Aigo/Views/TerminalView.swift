@@ -8,12 +8,14 @@ struct TerminalPane: View {
     @ObservedObject var model: TerminalModel
     @Binding var fontSize: Double
     var onTap: () -> Void = {}
+    /// Keystrokes typed into the terminal; nil = read-only.
+    var onInput: ((String) -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 0) {
             strip
             Rectangle().fill(Theme.lineSoft).frame(height: 1)
-            TerminalCanvas(model: model, fontSize: CGFloat(fontSize), onTap: onTap)
+            TerminalCanvas(model: model, fontSize: CGFloat(fontSize), onTap: onTap, onInput: onInput)
                 .background(Theme.codeBg)
         }
         .background(Theme.codeBg)
@@ -48,8 +50,14 @@ struct TerminalPane: View {
                     }
                     Button {
                         fontSize = 12
+                        model.canvas?.resetZoom()
                     } label: {
                         Label("Default size", systemImage: "arrow.uturn.backward")
+                    }
+                    Button {
+                        model.canvas?.resetZoom()
+                    } label: {
+                        Label("Fit width (undo pinch zoom)", systemImage: "arrow.left.and.right")
                     }
                 }
                 Section {
@@ -124,7 +132,7 @@ struct TerminalPane: View {
     }
 
     private var stateText: String {
-        if model.exited { return "exited · read-only" }
+        if model.exited { return "exited · read-only · pinch to zoom" }
         if model.live {
             if let s = model.ptySize {
                 return model.owner ? "live · \(s.cols)×\(s.rows)" : "live · PC \(s.cols)×\(s.rows)"

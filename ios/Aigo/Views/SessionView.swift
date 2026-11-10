@@ -18,7 +18,6 @@ struct SessionView: View {
     @StateObject private var terminal = TerminalModel()
     @State private var tab: SessionTab = .chat
     @State private var draft = ""
-    @State private var termLine = ""
     @State private var sending = false
     @State private var banner: String?
     @State private var confirmKill = false
@@ -31,7 +30,6 @@ struct SessionView: View {
 
     private enum Field: Hashable {
         case chat
-        case terminal
     }
 
     private var session: SessionInfo? {
@@ -56,9 +54,9 @@ struct SessionView: View {
                     case .changes:
                         ChangesView(cwd: s.cwd ?? "")
                     default:
-                        TerminalPane(model: terminal, fontSize: $termFont) {
-                            if s.isRunning { focus = .terminal }
-                        }
+                        // Tap the terminal for the keyboard; keys go straight to it (#78).
+                        TerminalPane(model: terminal, fontSize: $termFont,
+                                     onInput: s.isRunning ? typeInTerminal : nil)
                     }
                 }
                 .frame(maxHeight: .infinity)
@@ -97,6 +95,7 @@ struct SessionView: View {
         .onChange(of: tab) { _, newTab in
             terminal.debounceNanos = newTab == .terminal ? 400_000_000 : 800_000_000
             terminal.setVisible(newTab == .terminal)
+            terminal.setKeyboard(false)
             focus = nil
             Haptics.selection()
         }
@@ -358,11 +357,19 @@ struct SessionView: View {
             }
             if s.isRunning && tab != .changes {
                 if tab == .terminal || !s.isAgent {
-                    KeyBar { key in
+                    // No compose box here: the terminal itself takes the keys (#78).
+                    KeyBar(keyboardShown: terminal.keyboardShown, ctrl: terminal.ctrlLatched,
+                           onKeyboard: {
+                               Haptics.tap()
+                               terminal.setKeyboard(!terminal.keyboardShown)
+                           },
+                           onCtrl: {
+                               Haptics.selection()
+                               terminal.ctrlLatched.toggle()
+                           }) { key in
                         Haptics.tap()
-                        act { await terminal.send(key.bytes) }
+                        typeInTerminal(key.bytes)
                     }
-                    terminalField
                 } else {
                     composer
                 }
@@ -422,42 +429,6 @@ struct SessionView: View {
         .padding(.leading, 14)
         .padding(.trailing, 2)
         .padding(.vertical, 1)
-        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
-            .strokeBorder(Color(aigoHex: 0x2A2D31), lineWidth: 1))
-    }
-
-    /// One line of shell input; Return sends it (plus Enter) as raw bytes.
-    private var terminalField: some View {
-        HStack(spacing: 8) {
-            Text("›")
-                .font(.aigo(.body, .bold))
-                .foregroundStyle(Theme.lime)
-            TextField("Type and press Return", text: $termLine)
-                .focused($focus, equals: .terminal)
-                .font(Theme.mono)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled(true)
-                .submitLabel(.send)
-                .foregroundStyle(Theme.text)
-                .onSubmit {
-                    sendTerminalLine()
-                }
-            Button {
-                sendTerminalLine()
-            } label: {
-                Image(systemName: "return")
-                    .font(.system(size: 15, weight: .semibold))
-                    .frame(width: 40, height: 40)
-                    .background(Theme.lime.opacity(0.15), in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
-                    .foregroundStyle(Theme.lime)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(Text("Send line"))
-        }
-        .padding(.leading, 14)
-        .padding(.trailing, 2)
-        .padding(.vertical, 2)
         .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
             .strokeBorder(Color(aigoHex: 0x2A2D31), lineWidth: 1))
@@ -545,11 +516,11 @@ struct SessionView: View {
         }
     }
 
-    private func sendTerminalLine() {
-        let line = termLine
-        termLine = ""
-        focus = .terminal
-        act { await terminal.send(line + "\r") }
+    /// A keystroke typed into the terminal canvas.
+    private func typeInTerminal(_ text: String) {
+        let bytes = terminal.keystroke(text)
+        if terminal.sendNow(bytes) { return }
+        act { await terminal.send(bytes) }
     }
 
     private func act(_ op: @escaping () async -> String?) {
@@ -610,26 +581,55 @@ struct MenuChoices: View {
     }
 }
 
-/// Terminal keys for shells and TUIs, sent as raw bytes.
+/// Terminal keys for shells and TUIs, sent as raw bytes, plus the keyboard
+/// toggle and a Ctrl latch for the soft keyboard.
 struct KeyBar: View {
+    var keyboardShown = false
+    var ctrl = false
+    var onKeyboard: () -> Void = {}
+    var onCtrl: () -> Void = {}
     let onKey: (TerminalKeys.Key) -> Void
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(TerminalKeys.bar) { k in
-                    Button {
-                        onKey(k)
-                    } label: {
-                        Text(k.label)
+        HStack(spacing: 6) {
+            Button(action: onKeyboard) {
+                Image(systemName: keyboardShown ? "keyboard.chevron.compact.down" : "keyboard")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(keyboardShown ? Theme.bg : Theme.lime)
+                    .frame(width: 44, height: 40)
+                    .background(keyboardShown ? Theme.lime : Theme.lime.opacity(0.15),
+                                in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Text(keyboardShown ? "Hide keyboard" : "Type in the terminal"))
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    Button(action: onCtrl) {
+                        Text("Ctrl")
                             .font(.aigo(.callout, .semibold))
-                            .foregroundStyle(Theme.text)
+                            .foregroundStyle(ctrl ? Theme.bg : Theme.text)
                             .padding(.horizontal, 10)
                             .frame(minWidth: 40, minHeight: 40)
-                            .background(Theme.softWhite, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+                            .background(ctrl ? Theme.lime : Theme.softWhite,
+                                        in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel(Text(k.accessibility))
+                    .accessibilityLabel(Text("Control, applies to the next key"))
+                    .accessibilityAddTraits(ctrl ? .isSelected : [])
+                    ForEach(TerminalKeys.bar) { k in
+                        Button {
+                            onKey(k)
+                        } label: {
+                            Text(k.label)
+                                .font(.aigo(.callout, .semibold))
+                                .foregroundStyle(Theme.text)
+                                .padding(.horizontal, 10)
+                                .frame(minWidth: 40, minHeight: 40)
+                                .background(Theme.softWhite, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(Text(k.accessibility))
+                    }
                 }
             }
         }

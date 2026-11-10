@@ -30,12 +30,25 @@ struct TerminalMetrics {
 /// the font is scaled down to fit the width (not below `minFontSize`; past
 /// that it scrolls horizontally). The grid that would fit at the chosen text
 /// size is reported separately through `onPhoneGrid` ("Fit to phone").
-final class TerminalCanvasView: UIView, UIScrollViewDelegate {
+///
+/// Pinch zooms the text (on top of the fitted size; scrolls both ways when
+/// zoomed in). While `acceptsInput` is on, a tap brings up the keyboard and
+/// every keystroke goes straight to the terminal through `onInput` (#78).
+final class TerminalCanvasView: UIView, UIScrollViewDelegate, UIKeyInput {
     var emulator: VTEmulator {
         didSet { contentChanged() }
     }
     var onPhoneGrid: ((GridSize) -> Void)?
     var onTap: (() -> Void)?
+    /// Keystrokes as terminal bytes (CR for Return, DEL for Backspace...).
+    var onInput: ((String) -> Void)?
+    var onKeyboardChange: ((Bool) -> Void)?
+    /// Running session: the canvas takes keyboard focus on tap.
+    var acceptsInput = false {
+        didSet { if !acceptsInput && isFirstResponder { _ = resignFirstResponder() } }
+    }
+    /// Pinch zoom on top of the fitted text size (1 = fitted).
+    private(set) var zoom: CGFloat = 1
 
     /// The text size the user picked.
     var userFontSize: CGFloat = 12 {
@@ -95,6 +108,8 @@ final class TerminalCanvasView: UIView, UIScrollViewDelegate {
         let tap = UITapGestureRecognizer(target: self, action: #selector(tapped))
         tap.cancelsTouchesInView = false
         scroll.addGestureRecognizer(tap)
+        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(pinched(_:)))
+        scroll.addGestureRecognizer(pinch)
         isAccessibilityElement = true
         accessibilityTraits = [.staticText]
         accessibilityLabel = "Terminal"
@@ -110,7 +125,172 @@ final class TerminalCanvasView: UIView, UIScrollViewDelegate {
     }
 
     @objc private func tapped() {
+        if acceptsInput {
+            if isFirstResponder { _ = resignFirstResponder() } else { _ = becomeFirstResponder() }
+        }
         onTap?()
+    }
+
+    // MARK: - Keyboard (UIKeyInput): keystrokes go straight to the terminal
+
+    var autocorrectionType: UITextAutocorrectionType = .no
+    var autocapitalizationType: UITextAutocapitalizationType = .none
+    var spellCheckingType: UITextSpellCheckingType = .no
+    var smartQuotesType: UITextSmartQuotesType = .no
+    var smartDashesType: UITextSmartDashesType = .no
+    var smartInsertDeleteType: UITextSmartInsertDeleteType = .no
+    var keyboardAppearance: UIKeyboardAppearance = .dark
+    var keyboardType: UIKeyboardType = .asciiCapable
+    var returnKeyType: UIReturnKeyType = .default
+
+    override var canBecomeFirstResponder: Bool { acceptsInput }
+    var hasText: Bool { true }
+
+    @discardableResult
+    override func becomeFirstResponder() -> Bool {
+        let ok = super.becomeFirstResponder()
+        // Deferred: this can run inside a SwiftUI update.
+        if ok { let cb = onKeyboardChange; DispatchQueue.main.async { cb?(true) } }
+        return ok
+    }
+
+    @discardableResult
+    override func resignFirstResponder() -> Bool {
+        let was = isFirstResponder
+        let ok = super.resignFirstResponder()
+        if was && ok { let cb = onKeyboardChange; DispatchQueue.main.async { cb?(false) } }
+        return ok
+    }
+
+    func setKeyboard(_ on: Bool) {
+        if on && !isFirstResponder && acceptsInput {
+            _ = becomeFirstResponder()
+        } else if !on && isFirstResponder {
+            _ = resignFirstResponder()
+        }
+    }
+
+    func insertText(_ text: String) {
+        // Return is CR for a terminal; the soft keyboard sends LF.
+        onInput?(text.replacingOccurrences(of: "\r\n", with: "\r").replacingOccurrences(of: "\n", with: "\r"))
+    }
+
+    func deleteBackward() {
+        onInput?("\u{7F}")
+    }
+
+    /// Hardware keyboard: arrows, Escape and Ctrl+letter don't arrive as text.
+    private var handledPresses = Set<UIPress>()
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        var rest = Set<UIPress>()
+        for p in presses {
+            if let k = p.key, let bytes = TerminalCanvasView.bytes(for: k) {
+                handledPresses.insert(p)
+                onInput?(bytes)
+            } else {
+                rest.insert(p)
+            }
+        }
+        if !rest.isEmpty { super.pressesBegan(rest, with: event) }
+    }
+
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let rest = presses.subtracting(handledPresses)
+        handledPresses.subtract(presses)
+        if !rest.isEmpty { super.pressesEnded(rest, with: event) }
+    }
+
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let rest = presses.subtracting(handledPresses)
+        handledPresses.subtract(presses)
+        if !rest.isEmpty { super.pressesCancelled(rest, with: event) }
+    }
+
+    static func bytes(for k: UIKey) -> String? {
+        switch k.keyCode {
+        case .keyboardEscape: return "\u{1B}"
+        case .keyboardUpArrow: return "\u{1B}[A"
+        case .keyboardDownArrow: return "\u{1B}[B"
+        case .keyboardRightArrow: return "\u{1B}[C"
+        case .keyboardLeftArrow: return "\u{1B}[D"
+        case .keyboardHome: return "\u{1B}[H"
+        case .keyboardEnd: return "\u{1B}[F"
+        case .keyboardPageUp: return "\u{1B}[5~"
+        case .keyboardPageDown: return "\u{1B}[6~"
+        case .keyboardDeleteForward: return "\u{1B}[3~"
+        default: break
+        }
+        if k.modifierFlags.contains(.control), !k.modifierFlags.contains(.command) {
+            let c = k.charactersIgnoringModifiers.lowercased()
+            if c.count == 1, let u = c.unicodeScalars.first {
+                if u.value >= 0x61 && u.value <= 0x7A, let ctl = Unicode.Scalar(u.value - 0x60) {
+                    return String(Character(ctl))
+                }
+                switch c {
+                case "[": return "\u{1B}"
+                case "]": return "\u{1D}"
+                case " ", "2", "@": return "\u{00}"
+                default: break
+                }
+            }
+        }
+        return nil
+    }
+
+    // MARK: - Pinch zoom
+
+    private var pinchStartZoom: CGFloat = 1
+    private var pinchAnchor: (line: CGFloat, col: CGFloat)?
+
+    @objc private func pinched(_ g: UIPinchGestureRecognizer) {
+        switch g.state {
+        case .began:
+            pinchStartZoom = zoom
+            let p = g.location(in: scroll)
+            pinchAnchor = ((p.y - padding) / metrics.lineHeight, (p.x - padding) / metrics.cellWidth)
+        case .changed:
+            let z = min(max(pinchStartZoom * g.scale, 0.4), 6)
+            guard abs(z - zoom) > 0.01 else { return }
+            setZoom(z, anchorAt: g.location(in: self))
+        default:
+            pinchAnchor = nil
+        }
+    }
+
+    /// Back to the fitted text size ("Fit width" in the menu).
+    func resetZoom() {
+        guard zoom != 1 else { return }
+        zoom = 1
+        relayout(keepBottom: followBottom, forceMetrics: true)
+        canvas.setNeedsDisplay()
+    }
+
+    private func setZoom(_ z: CGFloat, anchorAt p: CGPoint) {
+        let before = metrics
+        zoom = z
+        let m = displayMetrics()
+        guard abs(m.font.pointSize - before.font.pointSize) > 0.01 else { return }
+        metrics = m
+        lastGrid = GridSize(cols: emulator.cols, rows: emulator.rows)
+        lastBounds = bounds.size
+        let contentW = max(bounds.width, CGFloat(emulator.cols) * m.cellWidth + 2 * padding)
+        let contentH = max(bounds.height, CGFloat(emulator.lineCount) * m.lineHeight + 2 * padding)
+        scroll.contentSize = CGSize(width: ceil(contentW), height: ceil(contentH))
+        var offset = scroll.contentOffset
+        let maxY = max(0, scroll.contentSize.height - bounds.height)
+        let maxX = max(0, scroll.contentSize.width - bounds.width)
+        if let a = pinchAnchor {
+            // Keep the character under the fingers under the fingers.
+            offset.x = padding + a.col * m.cellWidth - p.x
+            offset.y = padding + a.line * m.lineHeight - p.y
+        }
+        offset.x = min(max(0, offset.x), maxX)
+        offset.y = min(max(0, offset.y), maxY)
+        scroll.setContentOffset(offset, animated: false)
+        followBottom = offset.y >= maxY - 1
+        placeCanvas()
+        canvas.setNeedsDisplay()
     }
 
     // MARK: - Layout
@@ -143,10 +323,20 @@ final class TerminalCanvasView: UIView, UIScrollViewDelegate {
         }
     }
 
-    /// Display metrics: the user's size, shrunk so the PTY width fits.
+    /// Display metrics: the user's size, shrunk so the PTY width fits, times
+    /// the pinch zoom.
     private func displayMetrics() -> TerminalMetrics {
         let avail = bounds.width - 2 * padding
         let needed = CGFloat(emulator.cols) * userMetrics.cellWidth
+        if zoom != 1 {
+            var fitted = userFontSize
+            if avail > 40, needed > avail { fitted = userFontSize * avail / needed }
+            let size = min(max(4, floor(fitted * zoom * 4) / 4), 48)
+            if abs(size - metrics.font.pointSize) < 0.01 && metrics.font.familyName == userMetrics.font.familyName {
+                return metrics
+            }
+            return TerminalMetrics.make(name: fontName, boldName: boldFontName, size: size)
+        }
         guard avail > 40, needed > avail else { return userMetrics }
         var size = userFontSize * avail / needed
         size = max(TerminalCanvasView.minFontSize, floor(size * 4) / 4)
@@ -462,6 +652,8 @@ struct TerminalCanvas: UIViewRepresentable {
     @ObservedObject var model: TerminalModel
     var fontSize: CGFloat
     var onTap: () -> Void
+    /// nil = read-only (exited session): no keyboard.
+    var onInput: ((String) -> Void)?
 
     func makeUIView(context: Context) -> TerminalCanvasView {
         let v = TerminalCanvasView(emulator: model.emulator)
@@ -469,7 +661,10 @@ struct TerminalCanvas: UIViewRepresentable {
         v.boldFontName = TerminalScreen.boldFontName
         v.userFontSize = fontSize
         v.onTap = onTap
+        v.onInput = onInput
+        v.acceptsInput = onInput != nil && !model.exited
         v.onPhoneGrid = { [weak model] g in model?.setPhoneGrid(g) }
+        v.onKeyboardChange = { [weak model] on in model?.keyboardChanged(on) }
         model.canvas = v
         return v
     }
@@ -479,13 +674,17 @@ struct TerminalCanvas: UIViewRepresentable {
         v.boldFontName = TerminalScreen.boldFontName
         v.userFontSize = fontSize
         v.onTap = onTap
+        v.onInput = onInput
+        v.acceptsInput = onInput != nil && !model.exited
         v.showsCursor = model.live && !model.exited
         if model.canvas !== v { model.canvas = v }
         if v.emulator !== model.emulator { v.emulator = model.emulator }
     }
 
     static func dismantleUIView(_ v: TerminalCanvasView, coordinator: ()) {
+        v.acceptsInput = false
         v.onPhoneGrid = nil
+        v.onKeyboardChange = nil
     }
 }
 

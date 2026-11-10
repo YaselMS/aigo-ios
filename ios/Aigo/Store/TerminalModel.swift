@@ -2,7 +2,7 @@ import Foundation
 
 /// Live terminal of one session (docs/API.md §6, issue #46).
 ///
-/// Streams `WS /api/v1/sessions/{id}/attach?history=1000` into a local VT
+/// Streams `WS /api/v1/sessions/{id}/attach?history=3000` into a local VT
 /// emulator. The host owns the truth: every `size` message sets the emulator
 /// to the PTY's cols×rows first, and a `size` with `replay:true` is followed
 /// by a snapshot (it clears the screen and scrollback itself) that ends with
@@ -38,16 +38,25 @@ final class TerminalModel: ObservableObject {
     @Published private(set) var owner = false
     /// The host speaks the v0.4 attach protocol (sends `size`).
     @Published private(set) var sizeProtocol = false
+    /// The iOS keyboard is typing into the terminal.
+    @Published private(set) var keyboardShown = false
+    /// Ctrl from the key bar: the next letter is sent as a control key.
+    @Published var ctrlLatched = false
 
-    let emulator = VTEmulator(cols: 80, rows: 24)
+    let emulator: VTEmulator = {
+        let e = VTEmulator(cols: 80, rows: 24)
+        // The snapshot brings up to 3000 lines; keep room for live output after it.
+        e.maxHistory = 5000
+        return e
+    }()
     weak var canvas: TerminalCanvasView? {
         didSet { canvas?.holdsUpdates = replaying }
     }
 
     /// Minimum delay between output and the GET /screen it triggers.
     var debounceNanos: UInt64 = 400_000_000
-    /// Scrollback lines per snapshot.
-    static let historyLines = 1000
+    /// Scrollback lines per snapshot: everything the host keeps (API §6, max 3000; #82).
+    static let historyLines = 3000
 
     private var socket: LiveSocket?
     private var client: APIClient?
@@ -79,18 +88,23 @@ final class TerminalModel: ObservableObject {
     private var resizeTask: Task<Void, Never>?
     /// The emulator shows GET /screen text (exited session), not a stream.
     private var showsScreenText = false
+    /// A snapshot from the host was written (then GET /screen text is not shown).
+    private var hadSnapshot = false
 
     var mode: String {
-        visible && choice == .phone ? "interactive" : "view"
+        visible && choice == .phone && !exited ? "interactive" : "view"
     }
 
+    /// Exited sessions are attached too (view mode, never typed into): the
+    /// host replays their last screen and scrollback, so they scroll and zoom
+    /// like a live terminal (#81). GET /screen text is only the fallback.
     func start(client: APIClient, sessionID: String, running: Bool) {
-        if self.sessionID == sessionID && self.client === client && (socket != nil || !running) { return }
+        if self.sessionID == sessionID && self.client === client && socket != nil { return }
         stop()
         self.client = client
         self.sessionID = sessionID
         exited = !running
-        if running {
+        do {
             let s = LiveSocket(client: client,
                                path: "/api/v1/sessions/\(sessionID)/attach?history=\(TerminalModel.historyLines)")
             s.onBinary = { [weak self] data in
@@ -122,6 +136,7 @@ final class TerminalModel: ObservableObject {
         replayWatchdog?.cancel()
         replayWatchdog = nil
         sessionID = nil
+        hadSnapshot = false
         live = false
         resetConnectionState()
     }
@@ -218,7 +233,7 @@ final class TerminalModel: ObservableObject {
         guard let f = try? JSONDecoder().decode(AttachFrame.self, from: data) else { return }
         switch f.type {
         case "hello":
-            exited = false
+            exited = !(f.session?.isRunning ?? true)
             resetConnectionState()
             if let c = f.session?.cols, let r = f.session?.rows, c > 0, r > 0 {
                 helloSize = GridSize(cols: c, rows: r)
@@ -272,6 +287,7 @@ final class TerminalModel: ObservableObject {
         }
         replaying = false
         attached = true
+        if sizeProtocol || legacyReplay { hadSnapshot = true }
         canvas?.contentChanged()
         flushPendingInput()
         if first {
@@ -283,6 +299,7 @@ final class TerminalModel: ObservableObject {
     private func output(_ data: Data) {
         if showsScreenText {
             showsScreenText = false
+            shownText = nil
             emulator.reset()
         }
         if !gotSize && !attached && !legacyReplay {
@@ -352,7 +369,7 @@ final class TerminalModel: ObservableObject {
             if s != screen {
                 screen = s
             }
-            if socket == nil {
+            if socket == nil || (exited && !hadSnapshot) {
                 showScreenText(s.text ?? "")
             }
         }
@@ -397,30 +414,45 @@ final class TerminalModel: ObservableObject {
         }
     }
 
+    // MARK: - Keyboard (#78: keystrokes go straight to the terminal)
+
+    /// Called by the canvas when it gains/loses keyboard focus.
+    func keyboardChanged(_ on: Bool) {
+        if keyboardShown != on { keyboardShown = on }
+        if !on { ctrlLatched = false }
+    }
+
+    func setKeyboard(_ on: Bool) {
+        canvas?.setKeyboard(on)
+    }
+
+    /// One keystroke (or pasted text) from the keyboard. With Ctrl latched a
+    /// single letter becomes its control character.
+    func keystroke(_ text: String) -> String {
+        guard ctrlLatched else { return text }
+        ctrlLatched = false
+        guard text.count == 1, let u = text.lowercased().unicodeScalars.first else { return text }
+        if u.value >= 0x61 && u.value <= 0x7A, let c = Unicode.Scalar(u.value - 0x60) {
+            return String(Character(c))
+        }
+        switch text {
+        case "[": return "\u{1B}"
+        case "]": return "\u{1D}"
+        case " ", "@", "2": return "\u{00}"
+        default: return text
+        }
+    }
+
     // MARK: - Input
 
     /// Sends raw bytes to the PTY. Returns an error message, or nil.
     /// Typing switches to Fit to phone unless the user picked PC size.
     func send(_ text: String) async -> String? {
-        guard !text.isEmpty else { return nil }
+        guard !text.isEmpty, !exited else { return nil }
+        if sendNow(text) { return nil }
         var bytes = text
         if emulator.appCursorKeys, let mapped = TerminalKeys.applicationCursor[text] {
             bytes = mapped
-        }
-        if visible && choice == .pc && !explicitChoice {
-            choice = .phone
-            sendResize()
-        }
-        canvas?.scrollToBottom()
-        if let s = socket, s.isOpen {
-            if replaying {
-                // No input while a snapshot is being written (API.md §6).
-                pendingInput.append(Data(bytes.utf8))
-                return nil
-            }
-            if s.sendData(Data(bytes.utf8)) {
-                return nil
-            }
         }
         guard let c = client, let sid = sessionID else { return "Not connected to your PC." }
         do {
@@ -430,6 +462,29 @@ final class TerminalModel: ObservableObject {
         } catch {
             return c.problem(for: error).message
         }
+    }
+
+    /// Sends (or queues, during a snapshot) on the live socket, synchronously
+    /// so keystrokes keep their order. False: no open socket.
+    @discardableResult
+    func sendNow(_ text: String) -> Bool {
+        guard !text.isEmpty, !exited else { return true }
+        var bytes = text
+        if emulator.appCursorKeys, let mapped = TerminalKeys.applicationCursor[text] {
+            bytes = mapped
+        }
+        if visible && choice == .pc && !explicitChoice {
+            choice = .phone
+            sendResize()
+        }
+        canvas?.scrollToBottom()
+        guard let s = socket, s.isOpen else { return false }
+        if replaying {
+            // No input while a snapshot is being written (API.md §6).
+            pendingInput.append(Data(bytes.utf8))
+            return true
+        }
+        return s.sendData(Data(bytes.utf8))
     }
 
     private func flushPendingInput() {
