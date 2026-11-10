@@ -17,7 +17,8 @@ xcodebuild -project Aigo.xcodeproj -scheme Aigo -configuration Release \
 ```
 
 - Spec: `ios/project.yml`; project `Aigo`; scheme `Aigo` (builds both targets).
-- App target `Aigo` (bundle id `dev.aigo.app`, iOS 17, iPhone, 0.3.3; CI sets the build number).
+- App target `Aigo` (bundle id `dev.aigo.app`, iOS 17, iPhone and iPad (`TARGETED_DEVICE_FAMILY` 1,2),
+  version from `MARKETING_VERSION` in `project.yml`; CI sets the build number).
 - Widget extension `AigoWidgets` (`dev.aigo.app.widgets`), embedded in the app:
   Live Activity on the Lock Screen and in the Dynamic Island.
 - Swift 5 language mode, minimal concurrency checking. No signing settings,
@@ -45,7 +46,8 @@ Aigo/
   Net/       PinnedSessionDelegate (cert pin), APIClient (REST + error causes), LiveSocket (WS + reconnect)
   Store/     AppStore (state, events, digest, actions, address failover), TranscriptModel (chat WS),
              TerminalModel (attach WS: size/snapshot protocol), HostVault (Keychain),
-             UpdateChecker (latest GitHub release, Signulous hand-off)
+             UpdateChecker (latest GitHub release, IPA link with Copy/Share),
+             DesktopModel (remote desktop stream, input, monitors)
   Terminal/  VTEmulator (VT/xterm emulator with scrollback), TerminalCanvas (UIKit renderer)
   Live/      LiveActivityController, IntentActions (app side of the island buttons)
   Views/     Home (the board: Needs you / Working / Review / Done tabs), AttentionCard + SessionCard,
@@ -101,8 +103,8 @@ Tailscale when the PC is not on the same network (see the host's
 The app checks `GET https://api.github.com/repos/YaselMS/aigo-ios/releases/latest`
 at most every 6 hours (cached). When the tag is newer than the app's version,
 Settings → About and a dismissible banner on Home show "Update available: vX".
-Its button copies `https://github.com/YaselMS/aigo-ios/releases/download/<tag>/Aigo-unsigned.ipa`
-and opens signulous.com: paste the link in Signulous → Upload IPA from URL.
+It shows `https://github.com/YaselMS/aigo-ios/releases/download/<tag>/Aigo-unsigned.ipa` with Copy
+and Share and opens nothing (#74): paste the link in Signulous → Upload IPA from URL.
 
 ## Known limits (v1)
 
@@ -131,4 +133,6 @@ and opens signulous.com: paste the link in Signulous → Upload IPA from URL.
   The host's approval endpoint only takes approve/deny for those. Questions
   from agents running outside Aigo must be answered in their own terminal.
 - One active host at a time; switch with the host pill on Home or in Settings.
-- No iPad layout, no file browser, git, or remote desktop.
+- iPad runs the same layout full screen (no iPad-specific layout). No file browser.
+- Remote desktop (v0.3.3+): fitted JPEG stream from `WS /api/v1/desktop/stream`, view only until
+  Take control; monitor list, control permission and cursor from host API §7d.

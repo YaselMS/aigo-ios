@@ -7,7 +7,15 @@ once, then talks to it over TLS pinned to that PC's certificate, so it only
 ever connects to your machine. While a task runs, a Live Activity shows its
 progress on the Lock Screen and in the Dynamic Island.
 
-Requires iOS 17 or later.
+Requires iOS 17 or later. Runs on iPhone and iPad. Current version: **v0.3.4** (2026-11-10).
+
+**Direct download of the latest IPA:**
+https://github.com/YaselMS/aigo-ios/releases/latest/download/Aigo-unsigned.ipa
+
+What it does: the same board as the PC (Needs you / Working / To review / Done today), answer
+approvals and questions, chat with a session, a live terminal you type into directly, remote desktop
+of the PC, New work, search, several PCs (LAN or Tailscale), and a Live Activity. Developers and AI
+agents: see [AGENTS.md](AGENTS.md) and [ios/README.md](ios/README.md).
 
 ## Get the app (IPA)
 
@@ -21,14 +29,16 @@ Every build produces an **unsigned** IPA. You sign it yourself (see below).
 - **Tagged versions:** download `Aigo-unsigned.ipa` from the
   [Releases page](https://github.com/YaselMS/aigo-ios/releases). No sign-in needed.
 
-## Install with Signulous
+## Install with Signulous (or SideStore)
 
 1. In Signulous, upload `Aigo-unsigned.ipa`.
 2. Sign it for your registered device.
 3. Install it on the iPhone from Signulous. If iOS asks you to trust the
    developer or turn on Developer Mode, follow the prompt in Settings.
 
-To update, sign and install a newer IPA the same way.
+To update, sign and install a newer IPA the same way. The app tells you when a new version is out
+(Settings → About and a banner on Home) and shows the IPA link to copy or share: in Signulous use
+**Upload IPA from URL**. SideStore can install the same IPA (not verified by the maintainers).
 
 **What works and what does not:**
 
@@ -46,7 +56,8 @@ To update, sign and install a newer IPA the same way.
    and a 6-digit code.
 3. When Windows asks whether to allow Aigo through Windows Firewall, click
    **Allow**. This is a one-time prompt and needs an administrator.
-4. Make sure the phone and the PC are on the same Wi-Fi network.
+4. Make sure the phone and the PC are on the same Wi-Fi network, or that both run
+   [Tailscale](https://tailscale.com) with the same account (see the host's docs/REMOTE.md).
 5. In the iPhone app, scan the QR code. If you can't scan, type the
    `host:port`, the 6-digit code, and the certificate fingerprint shown on the PC.
 
