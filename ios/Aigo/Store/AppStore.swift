@@ -50,6 +50,8 @@ final class AppStore: ObservableObject {
     /// Agent New work should preselect (e.g. "codex" from the empty state).
     @Published var newWorkAgent: String?
     @Published var showSearch = false
+    /// Remote desktop viewer of the active PC (#63).
+    @Published var showDesktop = false
     /// Sessions marked "Looks good" here; shown as Done until the host agrees.
     @Published private(set) var locallySeen: Set<String> = []
     /// Sessions found by search that are not in the live list (older chats,

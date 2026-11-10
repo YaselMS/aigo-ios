@@ -114,6 +114,14 @@ struct SettingsView: View {
                     LabeledContent("Fingerprint") {
                         Text(String(host.fingerprint.prefix(16)) + "…").font(Theme.monoSmall)
                     }
+                    Button {
+                        Haptics.tap()
+                        store.showDesktop = true
+                    } label: {
+                        Label("View screen", systemImage: "display")
+                            .frame(minHeight: 44)
+                    }
+                    .disabled(store.client == nil)
                 }
             }
             .listRowBackground(Theme.surface)

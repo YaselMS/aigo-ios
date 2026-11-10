@@ -74,6 +74,19 @@ final class LiveSocket {
         return true
     }
 
+    /// Round trip of one WebSocket ping (nil when closed or failed).
+    func ping(_ done: @escaping (TimeInterval?) -> Void) {
+        guard isOpen, let task = task else {
+            done(nil)
+            return
+        }
+        let start = Date()
+        task.sendPing { error in
+            let rtt = error == nil ? Date().timeIntervalSince(start) : nil
+            DispatchQueue.main.async { done(rtt) }
+        }
+    }
+
     private func run(_ gen: Int) async {
         var attempt = 0
         while !Task.isCancelled && gen == generation {

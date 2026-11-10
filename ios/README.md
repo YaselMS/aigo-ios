@@ -17,7 +17,7 @@ xcodebuild -project Aigo.xcodeproj -scheme Aigo -configuration Release \
 ```
 
 - Spec: `ios/project.yml`; project `Aigo`; scheme `Aigo` (builds both targets).
-- App target `Aigo` (bundle id `dev.aigo.app`, iOS 17, iPhone, 0.3.2; CI sets the build number).
+- App target `Aigo` (bundle id `dev.aigo.app`, iOS 17, iPhone, 0.3.3; CI sets the build number).
 - Widget extension `AigoWidgets` (`dev.aigo.app.widgets`), embedded in the app:
   Live Activity on the Lock Screen and in the Dynamic Island.
 - Swift 5 language mode, minimal concurrency checking. No signing settings,

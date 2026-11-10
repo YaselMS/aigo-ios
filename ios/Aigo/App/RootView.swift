@@ -70,6 +70,15 @@ struct RootView: View {
                 .tint(Theme.lime)
                 .presentationDragIndicator(.visible)
         }
+        .fullScreenCover(isPresented: Binding(get: { store.showDesktop && !store.hosts.isEmpty },
+                                              set: { store.showDesktop = $0 })) {
+            DesktopView()
+                .environmentObject(store)
+                .environmentObject(appearance)
+                .environment(\.font, .aigo(.body))
+                .preferredColorScheme(.dark)
+                .tint(Theme.lime)
+        }
         .onChange(of: scenePhase) { _, phase in
             store.scenePhaseChanged(phase)
             if phase == .active {

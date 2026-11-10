@@ -72,6 +72,13 @@ struct HostSwitcher: View {
                 }
             }
             Section {
+                Button {
+                    Haptics.tap()
+                    store.showDesktop = true
+                } label: {
+                    Label("View screen", systemImage: "display")
+                }
+                .disabled(store.client == nil)
                 if store.connectionProblem != nil {
                     Button {
                         store.retry()
