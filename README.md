@@ -7,7 +7,7 @@ once, then talks to it over TLS pinned to that PC's certificate, so it only
 ever connects to your machine. While a task runs, a Live Activity shows its
 progress on the Lock Screen and in the Dynamic Island.
 
-Requires iOS 17 or later. Runs on iPhone and iPad. Current version: **v0.3.4** (2026-11-10).
+Requires iOS 17 or later. Runs on iPhone and iPad. Current version: **v0.3.5** (2026-11-11).
 
 **Direct download of the latest IPA:**
 https://github.com/YaselMS/aigo-ios/releases/latest/download/Aigo-unsigned.ipa

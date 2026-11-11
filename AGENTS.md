@@ -9,7 +9,7 @@ ISSUES.md. Code-level detail: [ios/README.md](ios/README.md).
 
 A native SwiftUI client (iOS 17+, iPhone and iPad) for the Aigo host daemon on a Windows PC. It pairs
 once, then talks to the host API directly over TLS pinned to the PC's certificate, with a per-device
-token. No Aigo account or server is involved. **Current version: v0.3.4** (2026-11-10).
+token. No Aigo account or server is involved. **Current version: v0.3.5** (2026-11-11).
 
 ## Structure
 
@@ -73,17 +73,18 @@ fields instead (e.g. the remote desktop monitor list).
 Not used yet (host has them; iPhone catch-up #66/#67): themes §7c, device looks §7e, sounds §7f,
 usage §7g, transcript paging §7h, sent-by §7b, `POST /sessions/{id}/stop` (#77).
 
-## Current features (v0.3.4)
+## Current features (v0.3.5)
 
 Board as four tabs with counts; needs-you cards (swipe or Approve/Deny; destructive commands need a
 second tap); conversation tabs Chat | Terminal | Changes; live terminal with direct typing, Ctrl latch,
 hardware keys, pinch zoom, 5,000-line local scrollback; exited sessions viewable; remote desktop with
-pinch/pan, trackpad mode, keyboard row, monitor picker, view-only handling, fit above the keyboard;
+pinch/pan, trackpad mode, keyboard row, Picture settings sheet, view-only handling, fit above the keyboard;
 New work; search; outside-Aigo sessions; several PCs with address failover (LAN, Tailscale); Live
 Activity with Approve/Deny; mono fonts and text size; update notice.
 
 ## Built but not yet tested on a device
 
+- v0.3.5: #89 Picture settings stay open while the remote desktop stream updates.
 - v0.3.4: #73 remote desktop above the keyboard, #78 direct terminal typing, #81 exited-session
   scroll/zoom, #82 full history, #74 update link (all P1 except #74, P2).
 - v0.3.3: #63 remote desktop viewer. v0.3.2: #38 update notice, #39 Tailscale pairing / multi-address,
