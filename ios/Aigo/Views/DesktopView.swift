@@ -3,12 +3,18 @@ import SwiftUI
 /// "View screen" (#63): the active PC's desktop, view only until the user
 /// takes control. Shown full screen; works in portrait and landscape.
 struct DesktopView: View {
+    private enum Panel: Identifiable {
+        case pictureSettings, confirmControl
+
+        var id: Self { self }
+    }
+
     @EnvironmentObject private var store: AppStore
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var model = DesktopModel()
     @State private var chrome = true
-    @State private var confirmControl = false
+    @State private var panel: Panel?
     @State private var wasInBackground = false
     /// The space between the top bar and the controls/keyboard (global coordinates).
     @State private var freeRect: CGRect = .zero
@@ -21,7 +27,7 @@ struct DesktopView: View {
             case .unavailable(let title, let message):
                 unavailable(title: title, message: message)
             default:
-                DesktopSurface(model: model, freeRect: freeRect, fitRequest: fitRequest) {
+                DesktopSurface(model: model, freeRect: freeRect, fitRequest: fitRequest, panelOpen: panel != nil) {
                     withAnimation(.easeOut(duration: 0.15)) { chrome.toggle() }
                 }
                 .ignoresSafeArea()
@@ -55,17 +61,24 @@ struct DesktopView: View {
         .onChange(of: model.control) { _, on in
             if on { chrome = true }
         }
-        .sheet(isPresented: $confirmControl) {
-            TakeControlSheet(hostLabel: model.hostLabel) {
-                confirmControl = false
-                Haptics.warning()
-                model.control = true
-            } onCancel: {
-                confirmControl = false
+        .sheet(item: $panel) { presentedPanel in
+            switch presentedPanel {
+            case .pictureSettings:
+                DesktopSettingsSheet(model: model) { fitRequest += 1 }
+                    .presentationDragIndicator(.visible)
+                    .preferredColorScheme(.dark)
+            case .confirmControl:
+                TakeControlSheet(hostLabel: model.hostLabel) {
+                    panel = nil
+                    Haptics.warning()
+                    model.control = true
+                } onCancel: {
+                    panel = nil
+                }
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
+                .preferredColorScheme(.dark)
             }
-            .presentationDetents([.medium])
-            .presentationDragIndicator(.visible)
-            .preferredColorScheme(.dark)
         }
     }
 
@@ -235,7 +248,7 @@ struct DesktopView: View {
             }
             .accessibilityElement(children: .combine)
             Spacer(minLength: 4)
-            settingsMenu
+            settingsButton
             if !model.controlAllowed {
                 Label("View only", systemImage: "eye")
                     .font(.aigo(.caption, .semibold))
@@ -250,7 +263,7 @@ struct DesktopView: View {
                     if model.control {
                         model.control = false
                     } else {
-                        confirmControl = true
+                        panel = .confirmControl
                     }
                 } label: {
                     Text(model.control ? "Release" : "Take control")
@@ -283,47 +296,9 @@ struct DesktopView: View {
         }
     }
 
-    private var settingsMenu: some View {
-        Menu {
-            Button {
-                fitRequest += 1
-            } label: {
-                Label("Fit picture", systemImage: "arrow.down.right.and.arrow.up.left")
-            }
-            Section("Monitor") {
-                if model.monitors.isEmpty {
-                    Button {} label: {
-                        Label(primaryLabel, systemImage: "checkmark")
-                    }
-                    .disabled(true)
-                    Text("This PC streams its primary monitor only.")
-                } else {
-                    Picker("Monitor", selection: $model.monitor) {
-                        ForEach(model.monitors) { m in
-                            Text(m.label).tag(m.index)
-                        }
-                    }
-                    .pickerStyle(.inline)
-                }
-            }
-            Picker("Resolution", selection: $model.maxWidth) {
-                ForEach([960, 1280, 1600, 1920, 2560], id: \.self) { w in
-                    Text("\(w) px wide").tag(w)
-                }
-            }
-            .pickerStyle(.menu)
-            Picker("Quality", selection: $model.quality) {
-                ForEach([30, 45, 60, 75, 90], id: \.self) { q in
-                    Text("JPEG \(q)").tag(q)
-                }
-            }
-            .pickerStyle(.menu)
-            Picker("Frame rate", selection: $model.targetFps) {
-                ForEach(model.fpsChoices, id: \.self) { f in
-                    Text("\(f) fps").tag(f)
-                }
-            }
-            .pickerStyle(.menu)
+    private var settingsButton: some View {
+        Button {
+            panel = .pictureSettings
         } label: {
             Image(systemName: "display")
                 .font(.system(size: 14, weight: .medium))
@@ -333,12 +308,8 @@ struct DesktopView: View {
                 .frame(width: 40, height: 44)
                 .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .accessibilityLabel(Text("Monitor and picture settings"))
-    }
-
-    private var primaryLabel: String {
-        if model.sourceSize == .zero { return "Primary monitor" }
-        return "Primary monitor · \(Int(model.sourceSize.width))×\(Int(model.sourceSize.height))"
     }
 
     // MARK: - Control bar
@@ -437,6 +408,76 @@ struct DesktopView: View {
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(on ? .isSelected : [])
+    }
+}
+
+/// Keep the controls and option lists in the sheet while the stream reports live stats.
+private struct DesktopSettingsSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var model: DesktopModel
+    let onFit: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    if model.monitors.isEmpty {
+                        LabeledContent("Monitor", value: primaryLabel)
+                    } else {
+                        Picker("Monitor", selection: $model.monitor) {
+                            ForEach(model.monitors) { monitor in
+                                Text(monitor.label).tag(monitor.index)
+                            }
+                        }
+                    }
+                    Picker("Resolution", selection: $model.maxWidth) {
+                        ForEach(options([960, 1280, 1600, 1920, 2560], including: model.maxWidth), id: \.self) { width in
+                            Text("\(width) px wide").tag(width)
+                        }
+                    }
+                    Picker("Quality", selection: $model.quality) {
+                        ForEach(options([30, 45, 60, 75, 90], including: model.quality), id: \.self) { quality in
+                            Text("JPEG \(quality)").tag(quality)
+                        }
+                    }
+                    Picker("Frame rate", selection: $model.targetFps) {
+                        ForEach(options(model.fpsChoices, including: model.targetFps), id: \.self) { fps in
+                            Text("\(fps) fps").tag(fps)
+                        }
+                    }
+                }
+                .pickerStyle(.navigationLink)
+                Section {
+                    Button {
+                        onFit()
+                        dismiss()
+                    } label: {
+                        Label("Fit picture", systemImage: "arrow.down.right.and.arrow.up.left")
+                    }
+                }
+            }
+            .font(.aigo(.body))
+            .scrollContentBackground(.hidden)
+            .background(Theme.bg)
+            .navigationTitle("Picture settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .tint(Theme.lime)
+    }
+
+    private var primaryLabel: String {
+        let size = model.sourceSize
+        if size == .zero { return "Primary monitor" }
+        return "Primary monitor · \(Int(size.width))×\(Int(size.height))"
+    }
+
+    private func options(_ values: [Int], including selection: Int) -> [Int] {
+        values.contains(selection) ? values : (values + [selection]).sorted()
     }
 }
 

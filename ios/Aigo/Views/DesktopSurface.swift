@@ -13,6 +13,7 @@ struct DesktopSurface: UIViewRepresentable {
     /// Free space in global (window) coordinates; .zero = the whole view.
     var freeRect: CGRect
     var fitRequest: Int
+    var panelOpen: Bool
     var onToggleChrome: () -> Void
 
     func makeUIView(context: Context) -> DesktopCanvasView {
@@ -27,7 +28,7 @@ struct DesktopSurface: UIViewRepresentable {
     func updateUIView(_ v: DesktopCanvasView, context: Context) {
         v.onToggleChrome = onToggleChrome
         v.apply(control: model.control && model.controlAllowed, trackpad: model.trackpad, panLock: model.panLock)
-        v.setKeyboard(model.keyboard && model.control && model.controlAllowed)
+        v.setKeyboard(!panelOpen && model.keyboard && model.control && model.controlAllowed)
         v.setFreeRect(freeRect)
         v.fitRequest(fitRequest)
     }
