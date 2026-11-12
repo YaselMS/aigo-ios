@@ -9,7 +9,7 @@ ISSUES.md. Code-level detail: [ios/README.md](ios/README.md).
 
 A native SwiftUI client (iOS 17+, iPhone and iPad) for the Aigo host daemon on a Windows PC. It pairs
 once, then talks to the host API directly over TLS pinned to the PC's certificate, with a per-device
-token. No Aigo account or server is involved. **Current version: v0.3.5** (2026-11-11).
+token. No Aigo account or server is involved. **Current version: v0.3.6** (2026-11-11).
 
 ## Structure
 
@@ -21,11 +21,11 @@ ios/Aigo/Model/        Codable mirrors of host JSON, pairing link, status wordin
 ios/Aigo/Net/          PinnedSessionDelegate (cert pin), APIClient (REST), LiveSocket (WS + reconnect)
 ios/Aigo/Store/        AppStore (single @MainActor source of truth), TranscriptModel, TerminalModel,
                        DesktopModel, HostVault (Keychain), AppearanceStore, UpdateChecker
-ios/Aigo/Terminal/     VTEmulator (own VT/xterm emulator with scrollback), TerminalCanvas (UIKit renderer)
+ios/Aigo/Terminal/     TerminalSurface: SwiftTerm (SPM, pinned in project.yml) kept at the PTY size, gestures, palette
 ios/Aigo/Views/        Home (board tabs), Session (Chat | Terminal | Changes), Desktop, NewWork, Search,
                        Pair, QR scanner, Settings
 ios/AigoWidgets/       Live Activity / Dynamic Island
-scripts/               package-ipa.sh, verify-ipa.sh, vt-selftest/ (terminal emulator self-test run in CI)
+scripts/               package-ipa.sh, verify-ipa.sh
 .github/workflows/ios.yml
 ```
 
@@ -33,7 +33,7 @@ scripts/               package-ipa.sh, verify-ipa.sh, vt-selftest/ (terminal emu
 
 - Build needs a Mac (Xcode 16+, `brew install xcodegen`); commands are in [README.md](README.md). This
   repo is usually edited from Windows, so **CI is the build**: every push and PR to `main` runs lint →
-  build on `macos-15` (VT self-test, XcodeGen, unsigned archive) → package and verify the IPA → upload
+  build on `macos-15` (Metal toolchain, XcodeGen, cached SPM resolve, unsigned archive) → package and verify the IPA → upload
   the artifact `Aigo-unsigned-ipa`.
 - **Release:** bump `MARKETING_VERSION` in `ios/project.yml`, commit, push, then push a `v*` tag. The
   `release` job attaches `Aigo-unsigned.ipa` + `.sha256` to a GitHub Release (a tag containing `-` is a
@@ -73,17 +73,19 @@ fields instead (e.g. the remote desktop monitor list).
 Not used yet (host has them; iPhone catch-up #66/#67): themes §7c, device looks §7e, sounds §7f,
 usage §7g, transcript paging §7h, sent-by §7b, `POST /sessions/{id}/stop` (#77).
 
-## Current features (v0.3.5)
+## Current features (v0.3.6)
 
 Board as four tabs with counts; needs-you cards (swipe or Approve/Deny; destructive commands need a
 second tap); conversation tabs Chat | Terminal | Changes; live terminal with direct typing, Ctrl latch,
-hardware keys, pinch zoom, 5,000-line local scrollback; exited sessions viewable; remote desktop with
+hardware keys, pinch zoom, 5,000-line local scrollback (SwiftTerm since v0.3.6: mouse for TUIs, Ctrl/Alt bar, paste, selection copy); exited sessions viewable; remote desktop with
 pinch/pan, trackpad mode, keyboard row, Picture settings sheet, view-only handling, fit above the keyboard;
 New work; search; outside-Aigo sessions; several PCs with address failover (LAN, Tailscale); Live
 Activity with Approve/Deny; mono fonts and text size; update notice.
 
 ## Built but not yet tested on a device
 
+- v0.3.6: terminal is SwiftTerm (North star goal 1): herdr (mouse, two-finger wheel), gentle-shell / Pi,
+  Codex, Claude Code; PC size / Fit to phone; pinch; paste; copy selection; exited read-only view.
 - v0.3.5: #89 Picture settings stay open while the remote desktop stream updates.
 - v0.3.4: #73 remote desktop above the keyboard, #78 direct terminal typing, #81 exited-session
   scroll/zoom, #82 full history, #74 update link (all P1 except #74, P2).

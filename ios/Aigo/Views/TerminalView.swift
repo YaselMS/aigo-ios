@@ -1,21 +1,20 @@
 import SwiftUI
 import UIKit
 
-/// Live terminal pane: the session's terminal drawn by the local emulator,
-/// plus a status strip (live / reconnecting, PC size vs Fit to phone, text
-/// size and copy).
+/// Live terminal pane: the session's terminal (SwiftTerm), plus a status
+/// strip (live / reconnecting, PC size vs Fit to phone, text size, copy and
+/// paste). The same view shows exited sessions read-only.
 struct TerminalPane: View {
     @ObservedObject var model: TerminalModel
     @Binding var fontSize: Double
-    var onTap: () -> Void = {}
-    /// Keystrokes typed into the terminal; nil = read-only.
-    var onInput: ((String) -> Void)? = nil
+    /// Running session: tap for the keyboard, keys go to the terminal.
+    var interactive = false
 
     var body: some View {
         VStack(spacing: 0) {
             strip
             Rectangle().fill(Theme.lineSoft).frame(height: 1)
-            TerminalCanvas(model: model, fontSize: CGFloat(fontSize), onTap: onTap, onInput: onInput)
+            TerminalSurface(model: model, fontSize: $fontSize, interactive: interactive)
                 .background(Theme.codeBg)
         }
         .background(Theme.codeBg)
@@ -39,28 +38,45 @@ struct TerminalPane: View {
             Menu {
                 Section("Text size") {
                     Button {
-                        fontSize = min(fontSize + 1, 18)
+                        fontSize = min(fontSize + 1, 24)
                     } label: {
                         Label("Larger text", systemImage: "textformat.size.larger")
                     }
                     Button {
-                        fontSize = max(fontSize - 1, 8)
+                        fontSize = max(fontSize - 1, 6)
                     } label: {
                         Label("Smaller text", systemImage: "textformat.size.smaller")
                     }
                     Button {
                         fontSize = 12
-                        model.canvas?.resetZoom()
+                        model.surface.resetZoom()
                     } label: {
                         Label("Default size", systemImage: "arrow.uturn.backward")
                     }
                     Button {
-                        model.canvas?.resetZoom()
+                        model.surface.resetZoom()
                     } label: {
                         Label("Fit width (undo pinch zoom)", systemImage: "arrow.left.and.right")
                     }
                 }
                 Section {
+                    Button {
+                        if let text = model.selectedText(), !text.isEmpty {
+                            UIPasteboard.general.string = text
+                            Haptics.success()
+                        } else {
+                            Haptics.error()
+                        }
+                    } label: {
+                        Label("Copy selection", systemImage: "selection.pin.in.out")
+                    }
+                    if interactive && !model.exited {
+                        Button {
+                            model.paste()
+                        } label: {
+                            Label("Paste", systemImage: "doc.on.clipboard.fill")
+                        }
+                    }
                     Button {
                         UIPasteboard.general.string = model.screenText()
                         Haptics.success()
@@ -88,7 +104,7 @@ struct TerminalPane: View {
                     .frame(width: 40, height: 36)
                     .contentShape(Rectangle())
             }
-            .accessibilityLabel(Text("Text size and copy"))
+            .accessibilityLabel(Text("Text size, copy and paste"))
         }
         .padding(.leading, 14)
         .padding(.trailing, 4)

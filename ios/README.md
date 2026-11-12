@@ -48,7 +48,7 @@ Aigo/
              TerminalModel (attach WS: size/snapshot protocol), HostVault (Keychain),
              UpdateChecker (latest GitHub release, IPA link with Copy/Share),
              DesktopModel (remote desktop stream, input, monitors)
-  Terminal/  VTEmulator (VT/xterm emulator with scrollback), TerminalCanvas (UIKit renderer)
+  Terminal/  TerminalSurface (SwiftTerm TerminalView kept at the PTY size; palette, fonts, gestures)
   Live/      LiveActivityController, IntentActions (app side of the island buttons)
   Views/     Home (the board: Needs you / Working / Review / Done tabs), AttentionCard + SessionCard,
              Session (Chat | Terminal | Changes), Search, NewWork, Pair, QR, Settings (Appearance)
@@ -108,12 +108,17 @@ and Share and opens nothing (#74): paste the link in Signulous → Upload IPA fr
 
 ## Known limits (v1)
 
-- **Terminal** streams `WS /sessions/{id}/attach?history=1000` into a local VT
-  emulator (`Terminal/VTEmulator.swift`, colours and scrollback) following the
+- **Terminal** streams `WS /sessions/{id}/attach?history=3000` into SwiftTerm
+  (`Terminal/TerminalSurface.swift`, 5,000-line scrollback) following the
   host's size/snapshot protocol (host `docs/API.md` §6): every `size` message
-  resizes the emulator to the PTY's cols×rows first, then the snapshot frames
+  resizes the terminal to the PTY's cols×rows first, then the snapshot frames
   up to `replayed` redraw it; no input is sent in between and nothing is
-  replayed from a local cache (returning from the background re-attaches).
+  replayed from a local cache (back from the background it sends `refresh`,
+  or re-attaches if the socket died). Keys are encoded by SwiftTerm; the
+  emulator's own query replies are dropped during a snapshot and otherwise
+  sent by REST so they never claim the PTY size. Touch: one finger scrolls,
+  selects, or taps/drags as the mouse when the program enabled mouse
+  reporting; two fingers send the wheel (or arrows on the alternate screen).
   "PC size" sends `resize` with `mode:"view"` and scales the text to the PC's
   width; "Fit to phone" (also chosen by typing, unless PC size was picked)
   sends `mode:"interactive"`. Size reports are debounced (keyboard, rotation).

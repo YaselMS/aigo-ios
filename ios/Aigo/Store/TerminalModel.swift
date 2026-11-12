@@ -2,21 +2,27 @@ import Foundation
 
 /// Live terminal of one session (docs/API.md §6, issue #46).
 ///
-/// Streams `WS /api/v1/sessions/{id}/attach?history=3000` into a local VT
-/// emulator. The host owns the truth: every `size` message sets the emulator
-/// to the PTY's cols×rows first, and a `size` with `replay:true` is followed
-/// by a snapshot (it clears the screen and scrollback itself) that ends with
-/// `replayed`. Nothing is cached or replayed locally; after a reconnect or a
-/// return from the background the socket re-attaches and gets a new snapshot.
+/// Streams `WS /api/v1/sessions/{id}/attach?history=3000` into SwiftTerm
+/// (`TerminalSurfaceView`). The host owns the truth: every `size` message sets
+/// the terminal to the PTY's cols×rows first, and a `size` with `replay:true`
+/// is followed by a snapshot (it clears the screen and scrollback itself) that
+/// ends with `replayed`. Binary frames are raw PTY bytes and go straight to
+/// SwiftTerm. Nothing is cached or replayed locally; back from the background
+/// the model asks for a fresh snapshot (`refresh`), or re-attaches.
 ///
 /// Size: "PC size" sends `resize` with `mode:"view"` (the PC keeps its size,
 /// the phone scales the text to fit); "Fit to phone" sends `mode:"interactive"`
-/// (the PTY takes the phone's size). Typing switches to Fit to phone unless
-/// the user explicitly picked PC size. Outside the Terminal tab the phone is
-/// always in view mode.
+/// with the grid SwiftTerm fits on the phone (the PTY takes the phone's size).
+/// Typing switches to Fit to phone unless the user explicitly picked PC size.
+/// Outside the Terminal tab the phone is always in view mode.
+///
+/// Input: SwiftTerm encodes keys (cursor-key mode, bracketed paste, mouse) and
+/// the bytes go to the socket. The emulator's own replies to queries are not
+/// typing: they are dropped during a snapshot and otherwise sent by REST, which
+/// does not claim the PTY size.
 ///
 /// GET /screen is still polled (debounced) for the on-screen menu and the
-/// "working" line; it no longer drives the rendering.
+/// "working" line; it does not drive the rendering.
 @MainActor
 final class TerminalModel: ObservableObject {
     enum SizeChoice: String {
@@ -40,18 +46,13 @@ final class TerminalModel: ObservableObject {
     @Published private(set) var sizeProtocol = false
     /// The iOS keyboard is typing into the terminal.
     @Published private(set) var keyboardShown = false
-    /// Ctrl from the key bar: the next letter is sent as a control key.
-    @Published var ctrlLatched = false
+    /// Ctrl / Alt from the key bar: applied to the next key.
+    @Published private(set) var ctrlLatched = false
+    @Published private(set) var altLatched = false
 
-    let emulator: VTEmulator = {
-        let e = VTEmulator(cols: 80, rows: 24)
-        // The snapshot brings up to 3000 lines; keep room for live output after it.
-        e.maxHistory = 5000
-        return e
-    }()
-    weak var canvas: TerminalCanvasView? {
-        didSet { canvas?.holdsUpdates = replaying }
-    }
+    /// The terminal view (SwiftTerm). Owned here so it keeps its state while
+    /// another tab is shown.
+    let surface = TerminalSurfaceView(frame: .zero)
 
     /// Minimum delay between output and the GET /screen it triggers.
     var debounceNanos: UInt64 = 400_000_000
@@ -71,10 +72,10 @@ final class TerminalModel: ObservableObject {
     /// The user picked PC size / Fit to phone themselves.
     private var explicitChoice = false
     /// Between `size(replay:true)` (or `hello` on older hosts) and `replayed`.
-    private var replaying = false {
-        didSet { canvas?.holdsUpdates = replaying }
-    }
+    private var replaying = false
     private var replayWatchdog: Task<Void, Never>?
+    /// A `refresh` was sent; re-attach if no `size` answers it.
+    private var refreshWatchdog: Task<Void, Never>?
     /// Input typed while a snapshot was being written.
     private var pendingInput: [Data] = []
     /// The first snapshot of this connection has been written.
@@ -86,10 +87,18 @@ final class TerminalModel: ObservableObject {
     private var phoneGrid: GridSize?
     private var lastSent: (grid: GridSize, mode: String)?
     private var resizeTask: Task<Void, Never>?
-    /// The emulator shows GET /screen text (exited session), not a stream.
+    /// The terminal shows GET /screen text (exited session), not a stream.
     private var showsScreenText = false
     /// A snapshot from the host was written (then GET /screen text is not shown).
     private var hadSnapshot = false
+
+    init() {
+        surface.onUserInput = { [weak self] bytes in self?.userInput(bytes) }
+        surface.onReport = { [weak self] bytes in self?.report(bytes) }
+        surface.onPhoneGrid = { [weak self] g in self?.setPhoneGrid(g) }
+        surface.onKeyboardChange = { [weak self] on in self?.keyboardChanged(on) }
+        surface.onModifiersChange = { [weak self] in self?.syncModifiers() }
+    }
 
     var mode: String {
         visible && choice == .phone && !exited ? "interactive" : "view"
@@ -104,21 +113,19 @@ final class TerminalModel: ObservableObject {
         self.client = client
         self.sessionID = sessionID
         exited = !running
-        do {
-            let s = LiveSocket(client: client,
-                               path: "/api/v1/sessions/\(sessionID)/attach?history=\(TerminalModel.historyLines)")
-            s.onBinary = { [weak self] data in
-                self?.output(data)
-            }
-            s.onMessage = { [weak self] data in
-                self?.frame(data)
-            }
-            s.onState = { [weak self] state in
-                self?.stateChanged(state)
-            }
-            socket = s
-            s.start()
+        let s = LiveSocket(client: client,
+                           path: "/api/v1/sessions/\(sessionID)/attach?history=\(TerminalModel.historyLines)")
+        s.onBinary = { [weak self] data in
+            self?.output(data)
         }
+        s.onMessage = { [weak self] data in
+            self?.frame(data)
+        }
+        s.onState = { [weak self] state in
+            self?.stateChanged(state)
+        }
+        socket = s
+        s.start()
         scheduleRefresh(immediate: true)
         startFallback()
     }
@@ -143,6 +150,8 @@ final class TerminalModel: ObservableObject {
 
     private func resetConnectionState() {
         replaying = false
+        refreshWatchdog?.cancel()
+        refreshWatchdog = nil
         pendingInput.removeAll()
         attached = false
         gotSize = false
@@ -157,26 +166,36 @@ final class TerminalModel: ObservableObject {
         start(client: c, sessionID: sid, running: true)
     }
 
-    /// Back from the background: re-attach for a fresh snapshot (iOS
-    /// suspends sockets; never replay what was cached).
+    /// Back from the background: ask for a fresh snapshot on the live socket
+    /// (API.md §6), or re-attach if the socket did not survive. Never replay
+    /// what was cached.
     func resume() {
-        guard let s = socket else {
-            scheduleRefresh(immediate: true)
-            return
-        }
-        resetConnectionState()
-        live = false
-        s.restart()
+        refreshSnapshot()
         scheduleRefresh(immediate: true)
     }
 
-    /// Asks for a fresh snapshot on the live socket.
+    /// Asks for a fresh snapshot (`refresh`); re-attaches when the socket is
+    /// gone or the host does not answer.
     func refreshSnapshot() {
-        guard let s = socket, s.isOpen, sizeProtocol, !replaying else {
-            resume()
+        guard let s = socket else { return }
+        guard s.isOpen, sizeProtocol, attached, !replaying else {
+            restartSocket()
             return
         }
         s.send(["type": "refresh"])
+        refreshWatchdog?.cancel()
+        refreshWatchdog = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.restartSocket()
+        }
+    }
+
+    private func restartSocket() {
+        guard let s = socket else { return }
+        resetConnectionState()
+        live = false
+        s.restart()
     }
 
     // MARK: - Size choice
@@ -193,11 +212,12 @@ final class TerminalModel: ObservableObject {
         explicitChoice = true
         guard choice != c else { return }
         choice = c
+        if c == .phone { surface.resetZoom() }
         sendResize()
     }
 
-    /// Columns/rows that fit the visible terminal at the chosen text size.
-    /// Debounced: keyboard and rotation animations report many sizes.
+    /// Columns/rows SwiftTerm fits in the visible terminal at the chosen text
+    /// size. Debounced: keyboard and rotation animations report many sizes.
     func setPhoneGrid(_ g: GridSize) {
         let grid = GridSize(cols: min(max(g.cols, 20), 400), rows: min(max(g.rows, 5), 200))
         guard grid != phoneGrid else { return }
@@ -241,13 +261,16 @@ final class TerminalModel: ObservableObject {
             // Older hosts replay raw output right after hello; v0.4 hosts send `size` first.
             beginReplay()
         case "size":
+            refreshWatchdog?.cancel()
+            refreshWatchdog = nil
             sizeProtocol = true
             gotSize = true
             if let c = f.cols, let r = f.rows, c > 0, r > 0 {
-                // Resize the emulator first; the snapshot that follows draws at this size.
-                emulator.resize(cols: c, rows: r)
-                ptySize = GridSize(cols: c, rows: r)
-                canvas?.contentChanged()
+                // Resize the terminal first; the snapshot that follows draws at this size.
+                takeOverFromScreenText()
+                let g = GridSize(cols: c, rows: r)
+                surface.setPTY(g)
+                if ptySize != g { ptySize = g }
             }
             owner = f.owner ?? false
             if f.replay == true {
@@ -262,6 +285,7 @@ final class TerminalModel: ObservableObject {
             exited = true
             scheduleRefresh(immediate: true)
         default:
+            // Unknown message types (newer hosts) are ignored.
             break
         }
     }
@@ -282,13 +306,12 @@ final class TerminalModel: ObservableObject {
         let first = !attached
         if first && !sizeProtocol && !legacyReplay, let h = helloSize {
             // Older host with nothing to replay.
-            emulator.resize(cols: h.cols, rows: h.rows)
+            surface.setPTY(h)
             ptySize = h
         }
         replaying = false
         attached = true
         if sizeProtocol || legacyReplay { hadSnapshot = true }
-        canvas?.contentChanged()
         flushPendingInput()
         if first {
             sendResize(force: true)
@@ -296,24 +319,26 @@ final class TerminalModel: ObservableObject {
         scheduleRefresh(immediate: true)
     }
 
+    private func takeOverFromScreenText() {
+        guard showsScreenText else { return }
+        showsScreenText = false
+        shownText = nil
+        surface.clear()
+    }
+
     private func output(_ data: Data) {
-        if showsScreenText {
-            showsScreenText = false
-            shownText = nil
-            emulator.reset()
-        }
+        takeOverFromScreenText()
         if !gotSize && !attached && !legacyReplay {
             // Older host: raw output history recorded at earlier sizes. Start clean once.
             legacyReplay = true
             if let h = helloSize {
-                emulator.resize(cols: h.cols, rows: h.rows)
+                surface.setPTY(h)
                 ptySize = h
             }
-            emulator.reset()
+            surface.clear()
         }
-        emulator.feed(data)
+        surface.feed(data)
         if !replaying {
-            canvas?.contentChanged()
             scheduleRefresh()
         }
     }
@@ -389,11 +414,12 @@ final class TerminalModel: ObservableObject {
         var trimmed = lines
         while let last = trimmed.last, last.isEmpty { trimmed.removeLast() }
         let width = max(20, trimmed.map { $0.unicodeScalars.count }.max() ?? 20)
-        emulator.resize(cols: min(width, 400), rows: max(1, trimmed.count))
-        emulator.reset()
-        emulator.feed(trimmed.joined(separator: "\r\n"))
+        let g = GridSize(cols: min(width, 400), rows: max(1, trimmed.count))
+        surface.setPTY(g)
+        ptySize = g
+        surface.clear()
+        surface.feed(Data(trimmed.joined(separator: "\r\n").utf8))
         showsScreenText = true
-        canvas?.contentChanged()
     }
 
     /// Safety net: a slow poll for the menu / working line.
@@ -416,47 +442,70 @@ final class TerminalModel: ObservableObject {
 
     // MARK: - Keyboard (#78: keystrokes go straight to the terminal)
 
-    /// Called by the canvas when it gains/loses keyboard focus.
-    func keyboardChanged(_ on: Bool) {
+    /// The terminal gained/lost keyboard focus.
+    private func keyboardChanged(_ on: Bool) {
         if keyboardShown != on { keyboardShown = on }
-        if !on { ctrlLatched = false }
     }
 
     func setKeyboard(_ on: Bool) {
-        canvas?.setKeyboard(on)
+        surface.setKeyboard(on)
     }
 
-    /// One keystroke (or pasted text) from the keyboard. With Ctrl latched a
-    /// single letter becomes its control character.
-    func keystroke(_ text: String) -> String {
-        guard ctrlLatched else { return text }
-        ctrlLatched = false
-        guard text.count == 1, let u = text.lowercased().unicodeScalars.first else { return text }
-        if u.value >= 0x61 && u.value <= 0x7A, let c = Unicode.Scalar(u.value - 0x60) {
-            return String(Character(c))
-        }
-        switch text {
-        case "[": return "\u{1B}"
-        case "]": return "\u{1D}"
-        case " ", "@", "2": return "\u{00}"
-        default: return text
-        }
+    func toggleCtrl() {
+        surface.ctrlLatched.toggle()
+    }
+
+    func toggleAlt() {
+        surface.altLatched.toggle()
+    }
+
+    private func syncModifiers() {
+        if ctrlLatched != surface.ctrlLatched { ctrlLatched = surface.ctrlLatched }
+        if altLatched != surface.altLatched { altLatched = surface.altLatched }
+    }
+
+    /// A key from the bar (through SwiftTerm, so Ctrl/Alt and cursor-key mode apply).
+    func press(_ key: TerminalKey) {
+        guard !exited else { return }
+        surface.press(key)
+    }
+
+    func paste() {
+        guard !exited else { return }
+        surface.paste()
     }
 
     // MARK: - Input
 
-    /// Sends raw bytes to the PTY. Returns an error message, or nil.
-    /// Typing switches to Fit to phone unless the user picked PC size.
+    /// Keystrokes, paste and mouse events from SwiftTerm.
+    private func userInput(_ bytes: ArraySlice<UInt8>) {
+        let data = Data(bytes)
+        if sendNow(data) { return }
+        // No socket: REST input keeps typing working while it reconnects.
+        guard let c = client, let sid = sessionID else { return }
+        let text = String(decoding: data, as: UTF8.self)
+        Task { [weak self] in
+            try? await c.input(sid, data: text)
+            self?.scheduleRefresh()
+        }
+    }
+
+    /// The emulator's replies to queries: never typed, so they must not claim
+    /// the PTY size. Dropped while a snapshot is written (they answer the
+    /// snapshot, not the program).
+    private func report(_ bytes: ArraySlice<UInt8>) {
+        guard !exited, attached, !replaying, let c = client, let sid = sessionID else { return }
+        let text = String(decoding: Data(bytes), as: UTF8.self)
+        Task { try? await c.input(sid, data: text) }
+    }
+
+    /// Sends text to the PTY (menu actions). Returns an error message, or nil.
     func send(_ text: String) async -> String? {
         guard !text.isEmpty, !exited else { return nil }
-        if sendNow(text) { return nil }
-        var bytes = text
-        if emulator.appCursorKeys, let mapped = TerminalKeys.applicationCursor[text] {
-            bytes = mapped
-        }
+        if sendNow(Data(text.utf8)) { return nil }
         guard let c = client, let sid = sessionID else { return "Not connected to your PC." }
         do {
-            try await c.input(sid, data: bytes)
+            try await c.input(sid, data: text)
             scheduleRefresh()
             return nil
         } catch {
@@ -466,25 +515,22 @@ final class TerminalModel: ObservableObject {
 
     /// Sends (or queues, during a snapshot) on the live socket, synchronously
     /// so keystrokes keep their order. False: no open socket.
+    /// Typing switches to Fit to phone unless the user picked PC size.
     @discardableResult
-    func sendNow(_ text: String) -> Bool {
-        guard !text.isEmpty, !exited else { return true }
-        var bytes = text
-        if emulator.appCursorKeys, let mapped = TerminalKeys.applicationCursor[text] {
-            bytes = mapped
-        }
+    private func sendNow(_ data: Data) -> Bool {
+        guard !data.isEmpty, !exited else { return true }
         if visible && choice == .pc && !explicitChoice {
             choice = .phone
+            surface.resetZoom()
             sendResize()
         }
-        canvas?.scrollToBottom()
         guard let s = socket, s.isOpen else { return false }
         if replaying {
             // No input while a snapshot is being written (API.md §6).
-            pendingInput.append(Data(bytes.utf8))
+            pendingInput.append(data)
             return true
         }
-        return s.sendData(Data(bytes.utf8))
+        return s.sendData(data)
     }
 
     private func flushPendingInput() {
@@ -499,41 +545,34 @@ final class TerminalModel: ObservableObject {
 
     // MARK: - Copy
 
-    func screenText() -> String { emulator.text(includeHistory: false) }
-    func allText() -> String { emulator.text(includeHistory: true) }
+    func screenText() -> String { surface.text(includeHistory: false) }
+    func allText() -> String { surface.text(includeHistory: true) }
+    func selectedText() -> String? { surface.selectedText() }
 }
 
-/// Byte sequences for the terminal key bar (xterm / ConPTY compatible).
+/// The special-keys bar.
 enum TerminalKeys {
     struct Key: Identifiable {
         let label: String
-        let bytes: String
+        let key: TerminalKey
         let accessibility: String
         var id: String { label }
     }
 
     static let bar: [Key] = [
-        Key(label: "Esc", bytes: "\u{1B}", accessibility: "Escape"),
-        Key(label: "Tab", bytes: "\t", accessibility: "Tab"),
-        Key(label: "↑", bytes: "\u{1B}[A", accessibility: "Up arrow"),
-        Key(label: "↓", bytes: "\u{1B}[B", accessibility: "Down arrow"),
-        Key(label: "←", bytes: "\u{1B}[D", accessibility: "Left arrow"),
-        Key(label: "→", bytes: "\u{1B}[C", accessibility: "Right arrow"),
-        Key(label: "Enter", bytes: "\r", accessibility: "Enter"),
-        Key(label: "^C", bytes: "\u{03}", accessibility: "Control C"),
-        Key(label: "^D", bytes: "\u{04}", accessibility: "Control D"),
-        Key(label: "1", bytes: "1", accessibility: "1"),
-        Key(label: "2", bytes: "2", accessibility: "2"),
-        Key(label: "3", bytes: "3", accessibility: "3"),
-        Key(label: "y", bytes: "y", accessibility: "y"),
-        Key(label: "n", bytes: "n", accessibility: "n"),
-    ]
-
-    /// Arrow keys while the program asked for application cursor keys (DECCKM).
-    static let applicationCursor: [String: String] = [
-        "\u{1B}[A": "\u{1B}OA",
-        "\u{1B}[B": "\u{1B}OB",
-        "\u{1B}[C": "\u{1B}OC",
-        "\u{1B}[D": "\u{1B}OD",
+        Key(label: "Esc", key: .esc, accessibility: "Escape"),
+        Key(label: "Tab", key: .tab, accessibility: "Tab"),
+        Key(label: "↑", key: .up, accessibility: "Up arrow"),
+        Key(label: "↓", key: .down, accessibility: "Down arrow"),
+        Key(label: "←", key: .left, accessibility: "Left arrow"),
+        Key(label: "→", key: .right, accessibility: "Right arrow"),
+        Key(label: "Enter", key: .enter, accessibility: "Enter"),
+        Key(label: "^C", key: .bytes([0x03]), accessibility: "Control C"),
+        Key(label: "^D", key: .bytes([0x04]), accessibility: "Control D"),
+        Key(label: "1", key: .text("1"), accessibility: "1"),
+        Key(label: "2", key: .text("2"), accessibility: "2"),
+        Key(label: "3", key: .text("3"), accessibility: "3"),
+        Key(label: "y", key: .text("y"), accessibility: "y"),
+        Key(label: "n", key: .text("n"), accessibility: "n"),
     ]
 }

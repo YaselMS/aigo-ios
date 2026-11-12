@@ -100,6 +100,7 @@ jobs:
             echo "RESULT_BUNDLE=$RUNNER_TEMP/Aigo.xcresult"
             echo "BUILD_LOG=$RUNNER_TEMP/xcodebuild.log"
             echo "OUT_DIR=$RUNNER_TEMP/out"
+            echo "SPM_DIR=$RUNNER_TEMP/spm"
           } >> "$GITHUB_ENV"
 
       - name: Select Xcode
@@ -140,12 +141,17 @@ jobs:
           xcodebuild -version
           xcodebuild -showsdks | grep -i iphoneos || true
 
-      - name: Terminal emulator self-test
+      - name: Metal toolchain
         shell: bash
         run: |
           set -euo pipefail
-          swiftc -O -o "$RUNNER_TEMP/vt-selftest" ios/Aigo/Terminal/VTEmulator.swift scripts/vt-selftest/main.swift
-          "$RUNNER_TEMP/vt-selftest"
+          # SwiftTerm ships a Metal shader; Xcode 26 installs the Metal compiler separately.
+          if xcrun metal -v >/dev/null 2>&1; then
+            echo "Metal compiler present"
+          else
+            xcodebuild -downloadComponent MetalToolchain
+            xcrun metal -v
+          fi
 
       - name: Install XcodeGen and xcbeautify
         shell: bash
@@ -160,6 +166,23 @@ jobs:
           set -euo pipefail
           xcodegen generate --spec ios/project.yml
           test -d ios/Aigo.xcodeproj
+
+      - name: Cache Swift packages
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/spm
+          key: spm-${{ runner.os }}-${{ hashFiles('ios/project.yml') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: Resolve Swift packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -resolvePackageDependencies \
+            -project ios/Aigo.xcodeproj \
+            -scheme Aigo \
+            -clonedSourcePackagesDirPath "$SPM_DIR" \
+            -skipPackagePluginValidation
 
       - name: Archive (no code signing)
         shell: bash
@@ -187,6 +210,7 @@ jobs:
             -destination 'generic/platform=iOS' \
             -archivePath "$ARCHIVE_PATH" \
             -resultBundlePath "$RESULT_BUNDLE" \
+            -clonedSourcePackagesDirPath "$SPM_DIR" \
             -skipPackagePluginValidation \
             -skipMacroValidation \
             CODE_SIGNING_ALLOWED=NO \

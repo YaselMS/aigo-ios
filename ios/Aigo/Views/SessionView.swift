@@ -55,8 +55,7 @@ struct SessionView: View {
                         ChangesView(cwd: s.cwd ?? "")
                     default:
                         // Tap the terminal for the keyboard; keys go straight to it (#78).
-                        TerminalPane(model: terminal, fontSize: $termFont,
-                                     onInput: s.isRunning ? typeInTerminal : nil)
+                        TerminalPane(model: terminal, fontSize: $termFont, interactive: s.isRunning)
                     }
                 }
                 .frame(maxHeight: .infinity)
@@ -359,16 +358,21 @@ struct SessionView: View {
                 if tab == .terminal || !s.isAgent {
                     // No compose box here: the terminal itself takes the keys (#78).
                     KeyBar(keyboardShown: terminal.keyboardShown, ctrl: terminal.ctrlLatched,
+                           alt: terminal.altLatched,
                            onKeyboard: {
                                Haptics.tap()
                                terminal.setKeyboard(!terminal.keyboardShown)
                            },
                            onCtrl: {
                                Haptics.selection()
-                               terminal.ctrlLatched.toggle()
+                               terminal.toggleCtrl()
+                           },
+                           onAlt: {
+                               Haptics.selection()
+                               terminal.toggleAlt()
                            }) { key in
                         Haptics.tap()
-                        typeInTerminal(key.bytes)
+                        terminal.press(key.key)
                     }
                 } else {
                     composer
@@ -516,13 +520,6 @@ struct SessionView: View {
         }
     }
 
-    /// A keystroke typed into the terminal canvas.
-    private func typeInTerminal(_ text: String) {
-        let bytes = terminal.keystroke(text)
-        if terminal.sendNow(bytes) { return }
-        act { await terminal.send(bytes) }
-    }
-
     private func act(_ op: @escaping () async -> String?) {
         banner = nil
         Task {
@@ -581,13 +578,16 @@ struct MenuChoices: View {
     }
 }
 
-/// Terminal keys for shells and TUIs, sent as raw bytes, plus the keyboard
-/// toggle and a Ctrl latch for the soft keyboard.
+/// Terminal keys for shells and TUIs (encoded by SwiftTerm), plus the
+/// keyboard toggle and Ctrl / Alt latches that apply to the next key, from
+/// this bar or the keyboard.
 struct KeyBar: View {
     var keyboardShown = false
     var ctrl = false
+    var alt = false
     var onKeyboard: () -> Void = {}
     var onCtrl: () -> Void = {}
+    var onAlt: () -> Void = {}
     let onKey: (TerminalKeys.Key) -> Void
 
     var body: some View {
@@ -604,18 +604,8 @@ struct KeyBar: View {
             .accessibilityLabel(Text(keyboardShown ? "Hide keyboard" : "Type in the terminal"))
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
-                    Button(action: onCtrl) {
-                        Text("Ctrl")
-                            .font(.aigo(.callout, .semibold))
-                            .foregroundStyle(ctrl ? Theme.bg : Theme.text)
-                            .padding(.horizontal, 10)
-                            .frame(minWidth: 40, minHeight: 40)
-                            .background(ctrl ? Theme.lime : Theme.softWhite,
-                                        in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(Text("Control, applies to the next key"))
-                    .accessibilityAddTraits(ctrl ? .isSelected : [])
+                    latch("Ctrl", on: ctrl, accessibility: "Control, applies to the next key", action: onCtrl)
+                    latch("Alt", on: alt, accessibility: "Alt, applies to the next key", action: onAlt)
                     ForEach(TerminalKeys.bar) { k in
                         Button {
                             onKey(k)
@@ -633,6 +623,21 @@ struct KeyBar: View {
                 }
             }
         }
+    }
+
+    private func latch(_ title: String, on: Bool, accessibility: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.aigo(.callout, .semibold))
+                .foregroundStyle(on ? Theme.bg : Theme.text)
+                .padding(.horizontal, 10)
+                .frame(minWidth: 40, minHeight: 40)
+                .background(on ? Theme.lime : Theme.softWhite,
+                            in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text(accessibility))
+        .accessibilityAddTraits(on ? .isSelected : [])
     }
 }
 
