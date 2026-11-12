@@ -183,7 +183,9 @@ final class TerminalSurfaceView: UIView, TerminalViewDelegate, UIGestureRecogniz
         term.inputView = UIView(frame: .zero)  // read-only until `acceptsInput`
         term.keyboardAppearance = .dark
         term.optionAsMetaKey = true
-        term.allowMouseReporting = true
+        // On only while the program asked for the mouse: SwiftTerm clears the
+        // selection on every output while it is on.
+        term.allowMouseReporting = false
         term.bellStyle = .none
         term.customBlockGlyphs = true  // box drawing, blocks and powerline drawn exactly
         term.nativeForegroundColor = TerminalPalette.foreground
@@ -199,7 +201,7 @@ final class TerminalSurfaceView: UIView, TerminalViewDelegate, UIGestureRecogniz
         term.scrollsToTop = false
         term.onReport = { [weak self] d in self?.onReport?(d) }
         term.onFocusChange = { [weak self] on in self?.onKeyboardChange?(on) }
-        term.onMouseModeChange = { [weak self] in self?.limitTermPans() }
+        term.onMouseModeChange = { [weak self] in self?.mouseModeChanged() }
         applyFont(size: userFontSize)
 
         let pinch = UIPinchGestureRecognizer(target: self, action: #selector(pinched(_:)))
@@ -413,7 +415,8 @@ final class TerminalSurfaceView: UIView, TerminalViewDelegate, UIGestureRecogniz
 
     /// SwiftTerm adds a mouse pan when a program turns mouse reporting on;
     /// keep it to one finger so two fingers stay free for wheel and pinch.
-    private func limitTermPans() {
+    private func mouseModeChanged() {
+        term.allowMouseReporting = term.getTerminal().mouseMode != .off
         for g in term.gestureRecognizers ?? [] {
             if let p = g as? UIPanGestureRecognizer { p.maximumNumberOfTouches = 1 }
         }
