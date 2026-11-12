@@ -116,9 +116,12 @@ and Share and opens nothing (#74): paste the link in Signulous → Upload IPA fr
   replayed from a local cache (back from the background it sends `refresh`,
   or re-attaches if the socket died). Keys are encoded by SwiftTerm; the
   emulator's own query replies are dropped during a snapshot and otherwise
-  sent by REST so they never claim the PTY size. Touch: one finger scrolls,
+  sent as `{"type":"report"}` on the socket (hosts with `hello.terminal.report`,
+  desktop v0.4.0+) or by REST (older hosts), so they never claim the PTY size.
+  Snapshots are raw VT replays that reset the terminal themselves; the app
+  writes them as they are. Touch: one finger scrolls,
   selects, or taps/drags as the mouse when the program enabled mouse
-  reporting; two fingers send the wheel (or arrows on the alternate screen).
+  reporting (the first tap both shows the keyboard and clicks); two fingers send the wheel (or arrows on the alternate screen).
   "PC size" sends `resize` with `mode:"view"` and scales the text to the PC's
   width; "Fit to phone" (also chosen by typing, unless PC size was picked)
   sends `mode:"interactive"`. Size reports are debounced (keyboard, rotation).

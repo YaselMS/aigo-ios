@@ -9,7 +9,7 @@ ISSUES.md. Code-level detail: [ios/README.md](ios/README.md).
 
 A native SwiftUI client (iOS 17+, iPhone and iPad) for the Aigo host daemon on a Windows PC. It pairs
 once, then talks to the host API directly over TLS pinned to the PC's certificate, with a per-device
-token. No Aigo account or server is involved. **Current version: v0.3.6** (2026-11-11).
+token. No Aigo account or server is involved. **Current version: v0.3.7** (2026-11-12).
 
 ## Structure
 
@@ -73,7 +73,7 @@ fields instead (e.g. the remote desktop monitor list).
 Not used yet (host has them; iPhone catch-up #66/#67): themes §7c, device looks §7e, sounds §7f,
 usage §7g, transcript paging §7h, sent-by §7b, `POST /sessions/{id}/stop` (#77).
 
-## Current features (v0.3.6)
+## Current features (v0.3.7)
 
 Board as four tabs with counts; needs-you cards (swipe or Approve/Deny; destructive commands need a
 second tap); conversation tabs Chat | Terminal | Changes; live terminal with direct typing, Ctrl latch,
@@ -84,6 +84,8 @@ Activity with Approve/Deny; mono fonts and text size; update notice.
 
 ## Built but not yet tested on a device
 
+- v0.3.7: host v0.4.0 attach (#94): terminal reports as `{"type":"report"}` on the socket (REST on
+  older hosts), raw VT replays written as they are; first tap in a mouse TUI focuses and clicks.
 - v0.3.6: terminal is SwiftTerm (North star goal 1): herdr (mouse, two-finger wheel), gentle-shell / Pi,
   Codex, Claude Code; PC size / Fit to phone; pinch; paste; copy selection; exited read-only view.
 - v0.3.5: #89 Picture settings stay open while the remote desktop stream updates.

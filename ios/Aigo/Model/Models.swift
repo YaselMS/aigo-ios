@@ -323,6 +323,15 @@ struct AttachFrame: Decodable {
     var mode: String?
     var reason: String?
     var replay: Bool?
+    // `hello.terminal` (issue #94, desktop v0.4.0): replays are raw VT, `report` is understood.
+    var terminal: AttachTerminal?
+}
+
+struct AttachTerminal: Decodable {
+    /// "raw": snapshots are replays of raw VT output.
+    var replay: String?
+    /// The host accepts `{"type":"report"}` for the emulator's own replies.
+    var report: Bool?
 }
 
 /// POST /api/v1/pairing/complete response.

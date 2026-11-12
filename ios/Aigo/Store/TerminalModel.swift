@@ -5,7 +5,7 @@ import Foundation
 /// Streams `WS /api/v1/sessions/{id}/attach?history=3000` into SwiftTerm
 /// (`TerminalSurfaceView`). The host owns the truth: every `size` message sets
 /// the terminal to the PTY's cols×rows first, and a `size` with `replay:true`
-/// is followed by a snapshot (it clears the screen and scrollback itself) that
+/// is followed by a snapshot (a replay that starts with its own reset) that
 /// ends with `replayed`. Binary frames are raw PTY bytes and go straight to
 /// SwiftTerm. Nothing is cached or replayed locally; back from the background
 /// the model asks for a fresh snapshot (`refresh`), or re-attaches.
@@ -16,10 +16,17 @@ import Foundation
 /// Typing switches to Fit to phone unless the user explicitly picked PC size.
 /// Outside the Terminal tab the phone is always in view mode.
 ///
+/// Snapshots are replays of raw VT output (host v0.4.0, issue #94): they start
+/// with their own reset (RIS), so the bytes go to SwiftTerm as they are and the
+/// terminal is not reset or cleared here (only an older host's raw history and
+/// an exited session's screen text start from a cleared screen).
+///
 /// Input: SwiftTerm encodes keys (cursor-key mode, bracketed paste, mouse) and
 /// the bytes go to the socket. The emulator's own replies to queries are not
-/// typing: they are dropped during a snapshot and otherwise sent by REST, which
-/// does not claim the PTY size.
+/// typing: they are dropped during a snapshot and otherwise sent as
+/// `{"type":"report"}` on the socket when `hello.terminal.report` is true (the
+/// host passes on only the size owner's), else by REST (older hosts). Neither
+/// claims the PTY size.
 ///
 /// GET /screen is still polled (debounced) for the on-screen menu and the
 /// "working" line; it does not drive the rendering.
@@ -74,6 +81,8 @@ final class TerminalModel: ObservableObject {
     /// Between `size(replay:true)` (or `hello` on older hosts) and `replayed`.
     private var replaying = false
     private var replayWatchdog: Task<Void, Never>?
+    /// The replay counts as stuck when no frame arrived before this time.
+    private var replayDeadline = Date.distantPast
     /// A `refresh` was sent; re-attach if no `size` answers it.
     private var refreshWatchdog: Task<Void, Never>?
     /// Input typed while a snapshot was being written.
@@ -82,6 +91,8 @@ final class TerminalModel: ObservableObject {
     private var attached = false
     private var gotSize = false
     private var legacyReplay = false
+    /// `hello.terminal.report`: the host takes `{"type":"report"}` messages.
+    private var reportProtocol = false
     private var helloSize: GridSize?
     /// The grid that fits the phone at the chosen text size.
     private var phoneGrid: GridSize?
@@ -156,6 +167,7 @@ final class TerminalModel: ObservableObject {
         attached = false
         gotSize = false
         legacyReplay = false
+        reportProtocol = false
         lastSent = nil
     }
 
@@ -255,6 +267,7 @@ final class TerminalModel: ObservableObject {
         case "hello":
             exited = !(f.session?.isRunning ?? true)
             resetConnectionState()
+            reportProtocol = f.terminal?.report == true
             if let c = f.session?.cols, let r = f.session?.rows, c > 0, r > 0 {
                 helloSize = GridSize(cols: c, rows: r)
             }
@@ -290,11 +303,20 @@ final class TerminalModel: ObservableObject {
         }
     }
 
+    /// A replay can be large (scrollback plus up to 1 MB of raw output), so the
+    /// watchdog only ends it after 5 s without a frame (30 s at most).
     private func beginReplay() {
         replaying = true
+        replayDeadline = Date().addingTimeInterval(5)
+        let cap = Date().addingTimeInterval(30)
         replayWatchdog?.cancel()
         replayWatchdog = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            while !Task.isCancelled {
+                guard let deadline = self?.replayDeadline else { return }
+                let left = min(deadline, cap).timeIntervalSinceNow
+                if left <= 0 { break }
+                try? await Task.sleep(nanoseconds: UInt64(left * 1_000_000_000) + 1_000_000)
+            }
             guard !Task.isCancelled else { return }
             self?.endReplay()
         }
@@ -337,8 +359,11 @@ final class TerminalModel: ObservableObject {
             }
             surface.clear()
         }
+        // Replays and live output alike go to SwiftTerm as they are.
         surface.feed(data)
-        if !replaying {
+        if replaying {
+            replayDeadline = Date().addingTimeInterval(5)
+        } else {
             scheduleRefresh()
         }
     }
@@ -492,10 +517,15 @@ final class TerminalModel: ObservableObject {
 
     /// The emulator's replies to queries: never typed, so they must not claim
     /// the PTY size. Dropped while a snapshot is written (they answer the
-    /// snapshot, not the program).
+    /// snapshot, not the program). Sent as `report` on the socket when the host
+    /// understands it (API.md §6), else by REST.
     private func report(_ bytes: ArraySlice<UInt8>) {
         guard !exited, attached, !replaying, let c = client, let sid = sessionID else { return }
         let text = String(decoding: Data(bytes), as: UTF8.self)
+        if reportProtocol, let s = socket, s.isOpen {
+            s.send(["type": "report", "data": text])
+            return
+        }
         Task { try? await c.input(sid, data: text) }
     }
 

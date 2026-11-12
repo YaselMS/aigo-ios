@@ -54,8 +54,9 @@ enum TerminalKey: Equatable {
 /// Keystrokes, paste and mouse events are user input (they go to the socket
 /// and claim the PTY size). The emulator's own answers to queries (focus
 /// in/out, cursor position, device attributes, OSC replies) are reports: the
-/// model drops them during a snapshot and sends the rest by REST, which never
-/// claims the size (API.md §6, "Terminal reports are not typing").
+/// model drops them during a snapshot and sends the rest as `report` messages
+/// (REST on older hosts), which never claim the size (API.md §6, "Terminal
+/// reports are not typing").
 final class AigoTermView: TerminalView {
     var onReport: ((ArraySlice<UInt8>) -> Void)?
     var onFocusChange: ((Bool) -> Void)?
@@ -109,8 +110,9 @@ final class AigoTermView: TerminalView {
 ///
 /// Touch: one finger scrolls the scrollback, selects (long press / double
 /// tap) or, when the program turned mouse reporting on, taps and drags as the
-/// mouse. Two fingers scroll: wheel events with mouse reporting, arrow keys on
-/// the alternate screen, otherwise the scrollback.
+/// mouse (the first tap on an unfocused terminal both focuses and clicks).
+/// Two fingers scroll: wheel events with mouse reporting, arrow keys on the
+/// alternate screen, otherwise the scrollback.
 final class TerminalSurfaceView: UIView, TerminalViewDelegate, UIGestureRecognizerDelegate {
     let term: AigoTermView
     private let pan = UIScrollView()
@@ -158,6 +160,10 @@ final class TerminalSurfaceView: UIView, TerminalViewDelegate, UIGestureRecogniz
     private var reportedGrid: GridSize?
     private var pinching = false
     private var wheelRemainder: CGFloat = 0
+    /// Sends the click of a tap that only focused the terminal (SwiftTerm's
+    /// own single tap just shows the keyboard when it is not focused).
+    private var focusTap: UITapGestureRecognizer!
+    private var focusedAtTouch = true
     private var observers: [NSObjectProtocol] = []
     private let padding: CGFloat = 4
     static let minFontSize: CGFloat = 4
@@ -212,6 +218,15 @@ final class TerminalSurfaceView: UIView, TerminalViewDelegate, UIGestureRecogniz
         wheel.maximumNumberOfTouches = 2
         wheel.delegate = self
         addGestureRecognizer(wheel)
+
+        focusTap = UITapGestureRecognizer(target: self, action: #selector(focusTapped(_:)))
+        focusTap.delegate = self
+        focusTap.cancelsTouchesInView = false
+        // Same timing as SwiftTerm's single tap (after a double tap has failed).
+        for g in term.gestureRecognizers ?? [] {
+            if let t = g as? UITapGestureRecognizer, t.numberOfTapsRequired == 2 { focusTap.require(toFail: t) }
+        }
+        term.addGestureRecognizer(focusTap)
 
         let nc = NotificationCenter.default
         for name in [Notification.Name.terminalViewControlModifierReset, .terminalViewMetaModifierReset] {
@@ -422,6 +437,32 @@ final class TerminalSurfaceView: UIView, TerminalViewDelegate, UIGestureRecogniz
         }
     }
 
+    // MARK: - First tap
+
+    /// SwiftTerm's single tap on an unfocused terminal only focuses it, so the
+    /// first tap into a TUI with mouse reporting was lost. Send that click here
+    /// (SwiftTerm still does the focusing; it sends clicks only when focused).
+    @objc private func focusTapped(_ g: UITapGestureRecognizer) {
+        guard g.state == .ended, !focusedAtTouch, acceptsInput, term.allowMouseReporting else { return }
+        guard !g.modifierFlags.contains(.shift) else { return }
+        let t = term.getTerminal()
+        // SwiftTerm's MouseMode.sendButtonPress() / sendButtonRelease() (internal there).
+        guard t.mouseMode == .vt200 || t.mouseMode == .buttonEventTracking || t.mouseMode == .anyEvent else { return }
+        let p = g.location(in: term)
+        let col = min(max(0, Int(p.x / cell.width)), t.cols - 1)
+        let y = p.y - term.contentOffset.y
+        let row = min(max(0, Int(y / cell.height)), t.rows - 1)
+        for release in [false, true] {
+            let flags = t.encodeButton(button: 0, release: release, shift: false, meta: false, control: false)
+            t.sendEvent(buttonFlags: flags, x: col, y: row, pixelX: Int(p.x), pixelY: Int(y))
+        }
+    }
+
+    func gestureRecognizer(_ g: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        if g === focusTap { focusedAtTouch = term.isFirstResponder }
+        return true
+    }
+
     // MARK: - Pinch (text size or zoom)
 
     func resetZoom() {
@@ -500,7 +541,8 @@ final class TerminalSurfaceView: UIView, TerminalViewDelegate, UIGestureRecogniz
 
     func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
         // Pinch and two-finger scroll run together; whichever moves more wins.
-        g.view === self && other.view === self
+        // The first-tap click runs alongside SwiftTerm's own tap (which focuses).
+        g === focusTap || other === focusTap || (g.view === self && other.view === self)
     }
 
     // MARK: - TerminalViewDelegate
