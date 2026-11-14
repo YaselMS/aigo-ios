@@ -81,7 +81,8 @@ struct SessionView: View {
             store.sendViewing(sessionID)
             if !pickedDefaultTab {
                 pickedDefaultTab = true
-                if let s = session, !s.isAgent {
+                // Continue opens the harness's terminal straight away (#95).
+                if store.takeTerminalFirst(sessionID) || !(session?.isAgent ?? true) {
                     tab = .terminal
                 }
             }

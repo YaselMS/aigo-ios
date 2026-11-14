@@ -9,7 +9,7 @@ ISSUES.md. Code-level detail: [ios/README.md](ios/README.md).
 
 A native SwiftUI client (iOS 17+, iPhone and iPad) for the Aigo host daemon on a Windows PC. It pairs
 once, then talks to the host API directly over TLS pinned to the PC's certificate, with a per-device
-token. No Aigo account or server is involved. **Current version: v0.3.7** (2026-11-12), paired with
+token. No Aigo account or server is involved. **Current version: v0.3.8** (2026-11-14), paired with
 desktop host v0.4.0.
 
 ## Priorities (host north star, 2026-11-11)
@@ -65,15 +65,15 @@ The user signs the unsigned IPA with Signulous (or SideStore) and installs it. C
 ## Host API dependencies
 
 Mirror the host's JSON exactly; the host's `docs/API.md` and `docs/ARCHITECTURE.md` §4 are the
-contract. The app does not read `capabilities` from `GET /api/v1/info` yet; it tolerates missing
-fields instead (e.g. the remote desktop monitor list).
+contract. The app reads `host.capabilities` from the events snapshot only for `sessions.continue`
+(Continue); otherwise it tolerates missing fields (e.g. the remote desktop monitor list).
 
 | Feature | Endpoints | Host doc |
 |---|---|---|
 | Pairing | `POST /pairing/complete`; `aigo://pair?h=&a=&fp=&c=&n=` link; address failover from `remote.endpoints` | API.md §7 |
 | Live state | `WS /events` (snapshot + `session.*`, `inbox.*`, `external.updated`, `board.updated`, `notify`) | ARCHITECTURE §1, API.md §1–§4 |
 | Board, seen, search | session `board` fields, `POST /sessions/{id}/seen`, `/viewed`, `GET /search` | API.md §1–§5 |
-| Continue (goal 2) | search items `harness`, `resumable`, `live`; `POST /continue`, `POST /continue/watch` (check the app uses these before a device test) | API.md §7j |
+| Continue (goal 2) | search items `harness`, `resumable`, `live`; `POST /continue` (409 `running_outside` → fork / watch), `POST /continue/watch`; capability `sessions.continue` (`Views/ContinueControl.swift`) | API.md §7j |
 | Chat | `WS /sessions/{id}/transcript`, `WS /external/{key}/transcript`, `POST …/prompt`, `…/menu`, `POST /approvals/{id}` | API.md §5a (not yet §7h paging) |
 | Terminal | `WS /sessions/{id}/attach?history=3000` (size + raw replay protocol, `hello.terminal`, `{"type":"report"}`), `…/input` (reports on older hosts), `…/keys`, `GET …/screen` | API.md §6 |
 | Session control | `…/interrupt`, `…/kill`, `…/restart`, `DELETE /sessions/{id}` | ARCHITECTURE §4 |
@@ -84,17 +84,21 @@ fields instead (e.g. the remote desktop monitor list).
 Not used yet (host has them; iPhone catch-up #66/#67): themes §7c, device looks §7e, sounds §7f,
 usage §7g, transcript paging §7h, sent-by §7b, `POST /sessions/{id}/stop` (#77).
 
-## Current features (v0.3.7)
+## Current features (v0.3.8)
 
 Board as four tabs with counts; needs-you cards (swipe or Approve/Deny; destructive commands need a
 second tap); conversation tabs Chat | Terminal | Changes; live terminal with direct typing, Ctrl latch,
 hardware keys, pinch zoom, 5,000-line local scrollback (SwiftTerm since v0.3.6: mouse for TUIs, Ctrl/Alt bar, paste, selection copy); exited sessions viewable; remote desktop with
 pinch/pan, trackpad mode, keyboard row, Picture settings sheet, view-only handling, fit above the keyboard;
-New work; search; outside-Aigo sessions; several PCs with address failover (LAN, Tailscale); Live
+New work; search with harness / running-where and Continue (goal 2); outside-Aigo sessions; several PCs with address failover (LAN, Tailscale); Live
 Activity with Approve/Deny; mono fonts and text size; update notice.
 
 ## Built but not yet tested on a device
 
+- v0.3.8: Continue (#95, goal 2): search and recent sessions show harness, project, activity and
+  where it runs; Continue → `POST /continue` → the session's terminal; running in another window →
+  host message, Continue a copy here, Notify me when it ends; Continue on outside-Aigo Working cards
+  and the read-only view; no button on hosts without `sessions.continue`.
 - v0.3.7: host v0.4.0 attach (#94): terminal reports as `{"type":"report"}` on the socket (REST on
   older hosts), raw VT replays written as they are; first tap in a mouse TUI focuses and clicks.
 - v0.3.6: terminal is SwiftTerm (North star goal 1): herdr (mouse, two-finger wheel), gentle-shell / Pi,
@@ -108,7 +112,7 @@ Activity with Approve/Deny; mono fonts and text size; update notice.
 
 ## Next steps
 
-1. **Now:** the user's real-device test of goals 1–3 with desktop v0.4.0 + iPhone v0.3.7 (host
+1. **Now:** the user's real-device test of goals 1–3 with desktop v0.4.0 + iPhone v0.3.8 (host
    `docs/TESTING.md` §3): herdr from the phone; gentle-shell search → Continue → work; ntfy alerts.
    Fix what breaks; log non-major bugs in the host `docs/ISSUES.md`.
 2. Goal 4 (reach outside the network): Tailscale-first pairing and errors, later a relay.

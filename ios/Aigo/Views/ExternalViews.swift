@@ -10,36 +10,44 @@ struct ExternalCard: View {
 
     var body: some View {
         let needs = column == .ask
-        Button {
-            if let target = store.externalTarget(session.key) {
-                store.openExternal(target)
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                if let target = store.externalTarget(session.key) {
+                    store.openExternal(target)
+                }
+            } label: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(session.displayTitle)
+                        .font(.aigo(.callout, .semibold))
+                        .foregroundStyle(Theme.text)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                    Text(meta)
+                        .font(.aigo(.caption2))
+                        .foregroundStyle(Theme.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text(line)
+                        .font(.aigo(.footnote))
+                        .foregroundStyle(needs ? Theme.coralText : Theme.secondary)
+                        .lineLimit(3)
+                        .multilineTextAlignment(.leading)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
-        } label: {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(session.displayTitle)
-                    .font(.aigo(.callout, .semibold))
-                    .foregroundStyle(Theme.text)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-                Text(meta)
-                    .font(.aigo(.caption2))
-                    .foregroundStyle(Theme.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Text(line)
-                    .font(.aigo(.footnote))
-                    .foregroundStyle(needs ? Theme.coralText : Theme.secondary)
-                    .lineLimit(3)
-                    .multilineTextAlignment(.leading)
+            .buttonStyle(.plain)
+            .accessibilityHint(Text("Opens the conversation, read-only"))
+            // Working outside Aigo: Continue, like the desktop (#95). The host
+            // answers "running in another window" with copy / notify options.
+            if column == .work && store.canContinue && session.ended != true {
+                ContinueControl(id: session.key)
             }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .aigoCard(border: needs ? Theme.coral : Color(aigoHex: 0x2A2D31),
-                      fill: needs ? Theme.coralWash : Theme.surface)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .accessibilityHint(Text("Opens the conversation, read-only"))
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .aigoCard(border: needs ? Theme.coral : Color(aigoHex: 0x2A2D31),
+                  fill: needs ? Theme.coralWash : Theme.surface)
     }
 
     private var meta: String {
@@ -116,13 +124,20 @@ struct ExternalConversationView: View {
             ChatView(model: transcript)
                 .frame(maxHeight: .infinity)
 
-            Text("Started outside Aigo. Answer it in its own terminal on the PC.")
-                .font(.aigo(.caption))
-                .foregroundStyle(Theme.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
+            if store.canContinue {
+                // Read-only view: Continue opens it in Aigo (host API §7j).
+                ContinueControl(id: key)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+            } else {
+                Text("Started outside Aigo. Answer it in its own terminal on the PC.")
+                    .font(.aigo(.caption))
+                    .foregroundStyle(Theme.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+            }
         }
         .background(Theme.bg.ignoresSafeArea())
         .navigationTitle(target?.title ?? "Conversation")

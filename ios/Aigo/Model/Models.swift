@@ -78,6 +78,43 @@ struct SearchItem: Codable, Identifiable, Equatable {
     var lastActivity: String?
     var external: Bool?
     var transcript: String?
+    // Continue (host API §7j, capability `sessions.continue`). Older hosts omit them.
+    var harness: String?       // claude | codex | pi | gentle-shell | opencode | terminal | command | <agent>
+    var resumable: Bool?
+    var live: LiveWhere?
+}
+
+/// Where a conversation runs now (search item `live`, 409 `live`).
+struct LiveWhere: Codable, Equatable {
+    var `where`: String?       // aigo | outside
+    var sessionId: String?
+    var pid: Int?
+    var evidence: String?
+}
+
+/// POST /api/v1/continue success body.
+struct ContinueResponse: Codable {
+    var action: String?        // open | restarted | started
+    var session: SessionInfo?
+    var argv: [String]?
+}
+
+/// POST /api/v1/continue 409 body (`code: "running_outside"`).
+struct ContinueBusy: Codable, Equatable {
+    var error: String?
+    var code: String?
+    var hostName: String?
+    var live: LiveWhere?
+    var harness: String?
+    var canFork: Bool?
+    var canWatch: Bool?
+}
+
+/// POST /api/v1/continue/watch body.
+struct ContinueWatch: Codable {
+    var ok: Bool?
+    var watching: Bool?
+    var running: Bool?
 }
 
 struct SearchResponse: Codable {
@@ -238,6 +275,8 @@ struct HostInfo: Codable {
     var version: String?
     var fingerprint: String?
     var remote: RemoteInfo?
+    /// Feature flags (e.g. `sessions.continue`); older hosts may omit it.
+    var capabilities: [String]?
 }
 
 /// Host info `remote` (docs/API.md §7).

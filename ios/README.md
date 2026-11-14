@@ -1,11 +1,13 @@
 # Aigo for iPhone
 
-Native SwiftUI client for the Aigo host daemon (protocol v1), v0.3.7. It pairs with
+Native SwiftUI client for the Aigo host daemon (protocol v1), v0.3.8. It pairs with
 a PC, shows what every agent is doing, lets you answer approvals in a row,
 chat with a session, drive its terminal, continue sessions, and start new work.
 Priorities follow the host's `docs/NORTH_STAR.md`: the terminal must be
 trustworthy first (SwiftTerm 1.20.0 since v0.3.6; socket reports, raw replays
-and first-tap click since v0.3.7, for host v0.4.0+).
+and first-tap click since v0.3.7, for host v0.4.0+). Goal 2 since v0.3.8: search shows each
+result's harness and where it runs, and **Continue** (`POST /continue`, `POST /continue/watch`) opens
+the resumed session's terminal; shown only when host info `capabilities` has `sessions.continue`.
 
 ## Build
 
@@ -109,7 +111,7 @@ Settings → About and a dismissible banner on Home show "Update available: vX".
 It shows `https://github.com/YaselMS/aigo-ios/releases/download/<tag>/Aigo-unsigned.ipa` with Copy
 and Share and opens nothing (#74): paste the link in Signulous → Upload IPA from URL.
 
-## Known limits (v0.3.7)
+## Known limits (v0.3.8)
 
 - **Terminal** streams `WS /sessions/{id}/attach?history=3000` into SwiftTerm
   (`Terminal/TerminalSurface.swift`, 5,000-line scrollback) following the

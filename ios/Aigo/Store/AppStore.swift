@@ -61,6 +61,10 @@ final class AppStore: ObservableObject {
     @Published private(set) var externals: [ExternalSession] = []
     /// Outside-Aigo and on-disk conversations opened from search.
     @Published private(set) var externalTargets: [String: ExternalTarget] = [:]
+    /// Host feature flags from the snapshot (`host.capabilities`).
+    @Published private(set) var capabilities: Set<String> = []
+    /// Sessions that should open on their Terminal tab (after Continue).
+    private var terminalFirst: Set<String> = []
 
     private(set) var client: APIClient?
     /// Increments whenever `client` is replaced (another PC or another address).
@@ -293,6 +297,72 @@ final class AppStore: ObservableObject {
                                     stream: item.transcript ?? "/api/v1/external/\(item.id)/transcript"))
     }
 
+    // MARK: - Continue (goal 2, host API §7j)
+
+    /// The host can continue any session (`POST /continue`). Older hosts
+    /// don't advertise it and get no Continue button.
+    var canContinue: Bool { capabilities.contains("sessions.continue") }
+
+    /// "running in Aigo" / "running in another window on DESK", or nil.
+    func liveLabel(_ live: LiveWhere?) -> String? {
+        switch live?.`where` {
+        case "aigo": return "running in Aigo"
+        case "outside": return "running in another window on \(hostLabel)"
+        default: return nil
+        }
+    }
+
+    enum ContinueOutcome {
+        case opened
+        case runningElsewhere(ContinueBusy)
+        case failed(String)
+    }
+
+    /// POST /continue, then opens the resulting Aigo session on its terminal.
+    func continueSession(_ id: String, fork: Bool = false) async -> ContinueOutcome {
+        guard let c = client else { return .failed("Not connected to your PC.") }
+        do {
+            let res = try await c.continueSession(id, fork: fork)
+            guard let info = res.session else {
+                return .failed("The PC did not return a session.")
+            }
+            withAnimation(.easeInOut(duration: 0.25)) {
+                upsertSession(info)
+            }
+            refreshLiveActivity()
+            terminalFirst.insert(info.id)
+            showSearch = false
+            openSession(info.id)
+            Haptics.success()
+            return .opened
+        } catch let e as APIError where e.status == 409 {
+            if let body = e.body, let busy = try? JSONDecoder().decode(ContinueBusy.self, from: body) {
+                return .runningElsewhere(busy)
+            }
+            return .runningElsewhere(ContinueBusy(error: e.message, canFork: false, canWatch: true))
+        } catch {
+            return .failed(c.problem(for: error).message)
+        }
+    }
+
+    /// POST /continue/watch: notify when the other window ends. `ended` is
+    /// true when it is no longer running (continue it now).
+    func watchContinue(_ id: String) async -> (text: String, isError: Bool, ended: Bool) {
+        guard let c = client else { return ("Not connected to your PC.", true, false) }
+        do {
+            let w = try await c.watchContinue(id)
+            if w.watching == true { return ("You'll be notified when it ends.", false, false) }
+            return ("It is not running any more. Continue it now.", false, true)
+        } catch {
+            return (c.problem(for: error).message, true, false)
+        }
+    }
+
+    /// True once for a session opened by Continue: start on the Terminal tab.
+    func takeTerminalFirst(_ id: String) -> Bool {
+        terminalFirst.remove(id) != nil
+    }
+
     private func sortedByActivity(_ list: [SessionInfo]) -> [SessionInfo] {
         list.sorted { ($0.activityDate ?? .distantPast) > ($1.activityDate ?? .distantPast) }
     }
@@ -518,6 +588,7 @@ final class AppStore: ObservableObject {
             if let endpoints = snap.host?.remote?.endpoints, !endpoints.isEmpty {
                 rememberEndpoints(endpoints)
             }
+            capabilities = Set(snap.host?.capabilities ?? [])
         case "session.updated":
             guard let info = try? decoder.decode(DataEnvelope<SessionInfo>.self, from: data).data else { return }
             let previous = session(id: info.id)
@@ -987,6 +1058,7 @@ final class AppStore: ObservableObject {
         searchCache = [:]
         externals = []
         externalTargets = [:]
+        capabilities = []
         hasSnapshot = false
         hostDisplayName = ""
         path = []

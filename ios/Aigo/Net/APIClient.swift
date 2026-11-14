@@ -5,6 +5,8 @@ struct APIError: LocalizedError {
     let message: String
     /// The pairing is no longer valid (device removed, certificate changed).
     var needsRepair: Bool = false
+    /// Raw error body (e.g. the 409 of POST /continue).
+    var body: Data? = nil
 
     var errorDescription: String? { message }
 
@@ -13,7 +15,7 @@ struct APIError: LocalizedError {
             return APIError(status: status, message: ConnectionProblem.removed.message, needsRepair: true)
         }
         if let body = try? JSONDecoder().decode(ErrorBody.self, from: data), let e = body.error, !e.isEmpty {
-            return APIError(status: status, message: e)
+            return APIError(status: status, message: e, body: data)
         }
         let text = (String(data: data, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         return APIError(status: status, message: text.isEmpty ? "The PC answered with HTTP \(status)." : text)
@@ -336,6 +338,18 @@ final class APIClient: @unchecked Sendable {
     /// outside-Aigo ones. Older hosts answer 404.
     func search(_ query: String, limit: Int = 60) async throws -> [SearchItem] {
         try await get("/api/v1/search?q=\(APIClient.queryValue(query))&limit=\(limit)", as: SearchResponse.self).items ?? []
+    }
+
+    /// Continue any session (host API §7j). Throws APIError 409 with a
+    /// ContinueBusy body when it runs in another window.
+    func continueSession(_ id: String, fork: Bool) async throws -> ContinueResponse {
+        var body: [String: Any] = ["id": id]
+        if fork { body["mode"] = "fork" }
+        return try await send("POST", "/api/v1/continue", body: body, as: ContinueResponse.self)
+    }
+
+    func watchContinue(_ id: String) async throws -> ContinueWatch {
+        try await send("POST", "/api/v1/continue/watch", body: ["id": id], as: ContinueWatch.self)
     }
 
     func externals() async throws -> [ExternalSession] {

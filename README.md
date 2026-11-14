@@ -7,7 +7,7 @@ once, then talks to it over TLS pinned to that PC's certificate, so it only
 ever connects to your machine. While a task runs, a Live Activity shows its
 progress on the Lock Screen and in the Dynamic Island.
 
-Requires iOS 17 or later. Runs on iPhone and iPad. Current version: **v0.3.7** (2026-11-12).
+Requires iOS 17 or later. Runs on iPhone and iPad. Current version: **v0.3.8** (2026-11-14).
 
 **Direct download of the latest IPA:**
 https://github.com/YaselMS/aigo-ios/releases/latest/download/Aigo-unsigned.ipa
@@ -20,8 +20,8 @@ reach outside the network, screen control, extensions (host repo `docs/NORTH_STA
 What it does: the same board as the PC (Needs you / Working / To review / Done today), answer
 approvals and questions, chat with a session, a live terminal (SwiftTerm: direct typing, mouse for
 TUIs such as herdr, scrollback, PC size or fit to phone), search and Continue, remote desktop of the
-PC, New work, several PCs (LAN or Tailscale), and a Live Activity. v0.3.7 needs the desktop host
-v0.4.0 or later for the exact terminal (older hosts still work). Developers and AI
+PC, New work, several PCs (LAN or Tailscale), and a Live Activity. v0.3.8 needs the desktop host
+v0.4.0 or later for the exact terminal and Continue (older hosts still work, without Continue). Developers and AI
 agents: see [AGENTS.md](AGENTS.md) and [ios/README.md](ios/README.md).
 
 ## Get the app (IPA)
