@@ -9,7 +9,17 @@ ISSUES.md. Code-level detail: [ios/README.md](ios/README.md).
 
 A native SwiftUI client (iOS 17+, iPhone and iPad) for the Aigo host daemon on a Windows PC. It pairs
 once, then talks to the host API directly over TLS pinned to the PC's certificate, with a per-device
-token. No Aigo account or server is involved. **Current version: v0.3.7** (2026-11-12).
+token. No Aigo account or server is involved. **Current version: v0.3.7** (2026-11-12), paired with
+desktop host v0.4.0.
+
+## Priorities (host north star, 2026-11-11)
+
+Aigo is not a harness: the app continues and follows the user's real harnesses on their PCs.
+Reliability over features. Work only in this order: 1 trustworthy terminal, 2 continue any session,
+3 stay on top (needs you / done, one-tap answers, orchestrator asks), 4 reach outside the network,
+5 screen view/control, 6 extensions. No new settings or looks until goals 1–3 pass the user's own
+test on the real phone. Use proven parts (SwiftTerm) instead of home-made ones. Sub-agents run on
+Opus (`model: opus`); resume a stopped agent with SendMessage instead of restarting it.
 
 ## Structure
 
@@ -63,8 +73,9 @@ fields instead (e.g. the remote desktop monitor list).
 | Pairing | `POST /pairing/complete`; `aigo://pair?h=&a=&fp=&c=&n=` link; address failover from `remote.endpoints` | API.md §7 |
 | Live state | `WS /events` (snapshot + `session.*`, `inbox.*`, `external.updated`, `board.updated`, `notify`) | ARCHITECTURE §1, API.md §1–§4 |
 | Board, seen, search | session `board` fields, `POST /sessions/{id}/seen`, `/viewed`, `GET /search` | API.md §1–§5 |
+| Continue (goal 2) | search items `harness`, `resumable`, `live`; `POST /continue`, `POST /continue/watch` (check the app uses these before a device test) | API.md §7j |
 | Chat | `WS /sessions/{id}/transcript`, `WS /external/{key}/transcript`, `POST …/prompt`, `…/menu`, `POST /approvals/{id}` | API.md §5a (not yet §7h paging) |
-| Terminal | `WS /sessions/{id}/attach?history=3000` (size/snapshot protocol), `…/input`, `…/keys`, `GET …/screen` | API.md §6 |
+| Terminal | `WS /sessions/{id}/attach?history=3000` (size + raw replay protocol, `hello.terminal`, `{"type":"report"}`), `…/input` (reports on older hosts), `…/keys`, `GET …/screen` | API.md §6 |
 | Session control | `…/interrupt`, `…/kill`, `…/restart`, `DELETE /sessions/{id}` | ARCHITECTURE §4 |
 | New work | `GET /agents`, `GET /recent-dirs`, `POST /sessions` | ARCHITECTURE §4 |
 | Changes | `GET /git/status`, `GET /git/diff` | ARCHITECTURE §4 |
@@ -97,13 +108,14 @@ Activity with Approve/Deny; mono fonts and text size; update notice.
 
 ## Next steps
 
-1. The user tests the v0.3.4 items above; failures are logged in the host `docs/ISSUES.md`.
-2. Host foundation phase (feature freeze): a generated API schema → Swift `Codable` models (replace
-   hand-written mirrors), and the extension **phone card format** that the app renders natively.
-3. Game mode card (#84) once the extension system exists.
-4. iPhone catch-up (#66, #67): version label, themes, sounds, device looks, usage, monitor picker
-   polish; adopt transcript paging (§7h) and `stop`. #75 shows all monitors side by side on iPad.
-5. Open: #17 pairing error says only "No network connection"; #18 wordmark button (may be obsolete).
+1. **Now:** the user's real-device test of goals 1–3 with desktop v0.4.0 + iPhone v0.3.7 (host
+   `docs/TESTING.md` §3): herdr from the phone; gentle-shell search → Continue → work; ntfy alerts.
+   Fix what breaks; log non-major bugs in the host `docs/ISSUES.md`.
+2. Goal 4 (reach outside the network): Tailscale-first pairing and errors, later a relay.
+3. Goal 5: remote desktop items (#73, #75, #89); Game mode card (#84) later.
+4. Waiting until goals 1–3 pass: generated Swift `Codable` models, iPhone catch-up (#66, #67:
+   themes, sounds, device looks, usage), transcript paging (§7h), `stop`, #17, #18. Extension phone
+   cards are goal 6.
 
 ## Rules for agents
 
