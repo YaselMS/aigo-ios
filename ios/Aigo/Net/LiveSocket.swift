@@ -17,6 +17,8 @@ final class LiveSocket {
     /// Binary frames (terminal output on /attach).
     var onBinary: ((Data) -> Void)?
     var onState: ((State) -> Void)?
+    /// Path for each new connection (e.g. a replay cursor `?since=<seq>`); `path` when nil.
+    var pathProvider: (() -> String)?
 
     private let client: APIClient
     private let path: String
@@ -93,7 +95,7 @@ final class LiveSocket {
             onState?(.connecting)
             let ws: URLSessionWebSocketTask
             do {
-                ws = try client.webSocketTask(path)
+                ws = try client.webSocketTask(pathProvider?() ?? path)
             } catch {
                 onState?(.closed(client.problem(for: error)))
                 runner = nil

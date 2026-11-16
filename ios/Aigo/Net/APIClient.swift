@@ -7,6 +7,8 @@ struct APIError: LocalizedError {
     var needsRepair: Bool = false
     /// Raw error body (e.g. the 409 of POST /continue).
     var body: Data? = nil
+    /// The body's `code` (e.g. `trust`, `not_open`, `conflict`).
+    var code: String? = nil
 
     var errorDescription: String? { message }
 
@@ -15,7 +17,7 @@ struct APIError: LocalizedError {
             return APIError(status: status, message: ConnectionProblem.removed.message, needsRepair: true)
         }
         if let body = try? JSONDecoder().decode(ErrorBody.self, from: data), let e = body.error, !e.isEmpty {
-            return APIError(status: status, message: e, body: data)
+            return APIError(status: status, message: e, body: data, code: body.code)
         }
         let text = (String(data: data, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         return APIError(status: status, message: text.isEmpty ? "The PC answered with HTTP \(status)." : text)
@@ -352,6 +354,34 @@ final class APIClient: @unchecked Sendable {
         try await send("POST", "/api/v1/continue/watch", body: ["id": id], as: ContinueWatch.self)
     }
 
+    /// One page of search (the Sessions list pages through every conversation).
+    func searchPage(_ query: String, limit: Int, offset: Int) async throws -> SearchResponse {
+        try await get("/api/v1/search?q=\(APIClient.queryValue(query))&limit=\(limit)&offset=\(offset)",
+                      as: SearchResponse.self)
+    }
+
+    // MARK: Structured chat (host API §7k)
+
+    /// POST /sessions/{id}/chat/{command}; `clientId` makes a retry safe.
+    func chatCommand(_ id: String, _ command: String, body: [String: Any]) async throws {
+        try await call("POST", "/api/v1/sessions/\(id)/chat/\(command)", body: body)
+    }
+
+    /// POST /sessions/{id}/mode: "chat" or "terminal" (capability `sessions.mode`).
+    func setMode(_ id: String, mode: String) async throws -> SessionInfo {
+        try await send("POST", "/api/v1/sessions/\(id)/mode", body: ["mode": mode], as: SessionInfo.self)
+    }
+
+    // MARK: Workspace (host API §7l)
+
+    func workspace(resolve: Bool) async throws -> WorkspaceDoc {
+        try await get(resolve ? "/api/v1/workspace?resolve=1" : "/api/v1/workspace", as: WorkspaceDoc.self)
+    }
+
+    func workspaceOps(_ ops: [[String: Any]]) async throws -> WorkspaceDoc {
+        try await send("POST", "/api/v1/workspace/ops", body: ["ops": ops], as: WorkspaceDoc.self)
+    }
+
     func externals() async throws -> [ExternalSession] {
         try await get("/api/v1/external", as: [ExternalSession].self)
     }
@@ -431,6 +461,11 @@ final class APIClient: @unchecked Sendable {
 
     func chooseMenu(_ id: String, number: Int, label: String) async throws {
         try await call("POST", "/api/v1/sessions/\(id)/menu", body: ["number": number, "label": label])
+    }
+
+    /// Answers a question with its Nth option (1-based); chat requests map it to the native option.
+    func answerOption(actionId: String, option: Int) async throws {
+        try await call("POST", "/api/v1/approvals/\(actionId)", body: ["decision": "approve", "option": option])
     }
 
     func decide(actionId: String, approve: Bool, choice: String?) async throws {

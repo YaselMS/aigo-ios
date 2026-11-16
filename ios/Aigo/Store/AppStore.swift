@@ -7,6 +7,8 @@ enum AppRoute: Hashable {
     /// file found by search (key "<agent>:<agentSessionId>").
     case external(String)
     case settings
+    /// The shared Sessions list (host API §7l).
+    case sessions
 }
 
 /// What the read-only conversation view needs to show and stream.
@@ -65,6 +67,13 @@ final class AppStore: ObservableObject {
     @Published private(set) var capabilities: Set<String> = []
     /// Sessions that should open on their Terminal tab (after Continue).
     private var terminalFirst: Set<String> = []
+    /// Sessions list organisation shared with the desktop (host API §7l).
+    @Published private(set) var workspace: WorkspaceDoc?
+    /// The /search item of each id the workspace names (`resolve=1`).
+    @Published private(set) var workspaceItems: [String: SearchItem] = [:]
+    /// A Continue that found the conversation running in another window, by id,
+    /// so the read-only view opens with the choices already shown.
+    private var continueConflicts: [String: ContinueBusy] = [:]
 
     private(set) var client: APIClient?
     /// Increments whenever `client` is replaced (another PC or another address).
@@ -195,7 +204,12 @@ final class AppStore: ObservableObject {
 
     func openExternal(_ target: ExternalTarget) {
         externalTargets[target.key] = target
-        path = [.external(target.key)]
+        path = basePath + [.external(target.key)]
+    }
+
+    /// Conversations opened from the Sessions list go back to it.
+    private var basePath: [AppRoute] {
+        path.first == .sessions ? [.sessions] : []
     }
 
     // MARK: - Board
@@ -291,6 +305,11 @@ final class AppStore: ObservableObject {
             openSession(item.id)
             return
         }
+        openReadOnly(item)
+    }
+
+    /// The read-only conversation of a search item (e.g. running in another window).
+    func openReadOnly(_ item: SearchItem) {
         let title = (item.title ?? "").isEmpty ? (item.lastPrompt ?? AgentNames.display(item.agent)) : item.title!
         openExternal(ExternalTarget(key: item.id, title: title,
                                     subtitle: externalSubtitle(agent: item.agent, cwd: item.cwd),
@@ -302,6 +321,18 @@ final class AppStore: ObservableObject {
     /// The host can continue any session (`POST /continue`). Older hosts
     /// don't advertise it and get no Continue button.
     var canContinue: Bool { capabilities.contains("sessions.continue") }
+    /// Structured chat and switching chat <-> terminal (host API §7k).
+    var canSwitchMode: Bool { capabilities.contains("sessions.mode") }
+    /// Shared sessions list (host API §7l).
+    var hasWorkspace: Bool { capabilities.contains("workspace") }
+
+    func rememberConflict(_ id: String, _ busy: ContinueBusy) {
+        continueConflicts[id] = busy
+    }
+
+    func takeConflict(_ id: String) -> ContinueBusy? {
+        continueConflicts.removeValue(forKey: id)
+    }
 
     /// "running in Aigo" / "running in another window on DESK", or nil.
     func liveLabel(_ live: LiveWhere?) -> String? {
@@ -330,7 +361,10 @@ final class AppStore: ObservableObject {
                 upsertSession(info)
             }
             refreshLiveActivity()
-            terminalFirst.insert(info.id)
+            // Codex / Claude continue in chat on hosts with §7k; others open their terminal.
+            if info.mode != "chat" {
+                terminalFirst.insert(info.id)
+            }
             showSearch = false
             openSession(info.id)
             Haptics.success()
@@ -589,6 +623,13 @@ final class AppStore: ObservableObject {
                 rememberEndpoints(endpoints)
             }
             capabilities = Set(snap.host?.capabilities ?? [])
+            if hasWorkspace {
+                Task { await self.loadWorkspace() }
+            }
+        case "workspace.updated":
+            guard let doc = try? decoder.decode(DataEnvelope<WorkspaceDoc>.self, from: data).data else { return }
+            applyWorkspace(doc)
+            return
         case "session.updated":
             guard let info = try? decoder.decode(DataEnvelope<SessionInfo>.self, from: data).data else { return }
             let previous = session(id: info.id)
@@ -923,7 +964,7 @@ final class AppStore: ObservableObject {
     // MARK: - Navigation
 
     func openSession(_ id: String) {
-        path = [.session(id)]
+        path = basePath + [.session(id)]
     }
 
     func openNewWork(agent: String? = nil) {
@@ -1059,6 +1100,9 @@ final class AppStore: ObservableObject {
         externals = []
         externalTargets = [:]
         capabilities = []
+        workspace = nil
+        workspaceItems = [:]
+        continueConflicts = [:]
         hasSnapshot = false
         hostDisplayName = ""
         path = []
@@ -1103,7 +1147,12 @@ final class AppStore: ObservableObject {
         guard let sid = item.sessionId, !sid.isEmpty else {
             return "This agent runs outside Aigo. Answer it in its own terminal."
         }
-        if let err = await chooseMenu(sid, number: number, label: label) {
+        if session(id: sid)?.isChat == true, let action = item.actionId, !action.isEmpty {
+            // Chat sessions have no terminal menu: option N answers the request (§7k).
+            if let err = await perform({ try await $0.answerOption(actionId: action, option: number) }) {
+                return err
+            }
+        } else if let err = await chooseMenu(sid, number: number, label: label) {
             return err
         }
         answeredHere.insert(item.id)
@@ -1150,6 +1199,62 @@ final class AppStore: ObservableObject {
             }
             return nil
         } catch {
+            return c.problem(for: error).message
+        }
+    }
+
+    /// POST /sessions/{id}/mode: "terminal" (open the harness in a terminal) or
+    /// "chat" (back to the structured chat).
+    func setMode(_ sessionID: String, _ mode: String) async -> String? {
+        guard let c = client else { return "Not connected to your PC." }
+        do {
+            let info = try await c.setMode(sessionID, mode: mode)
+            withAnimation(.easeInOut(duration: 0.25)) {
+                upsertSession(info)
+            }
+            return nil
+        } catch {
+            return c.problem(for: error).message
+        }
+    }
+
+    // MARK: - Workspace (host API §7l)
+
+    func loadWorkspace() async {
+        guard let c = client, hasWorkspace else { return }
+        guard let doc = try? await c.workspace(resolve: true) else { return }
+        workspaceItems = doc.items ?? [:]
+        var plain = doc
+        plain.items = nil
+        workspace = plain
+    }
+
+    /// A newer document (event or ops answer); reloads the resolved items
+    /// when it names an id not loaded yet.
+    private func applyWorkspace(_ doc: WorkspaceDoc) {
+        if let v = workspace?.version, let n = doc.version, n < v { return }
+        var plain = doc
+        plain.items = nil
+        withAnimation(.easeInOut(duration: 0.2)) {
+            workspace = plain
+        }
+        let known = Set(workspaceItems.keys)
+        if !doc.ids.subtracting(known).isEmpty {
+            Task { await self.loadWorkspace() }
+        }
+    }
+
+    /// POST /workspace/ops: ops merge with edits from other devices. On any
+    /// refusal (400, 409 conflict) the document is fetched again.
+    func workspaceOps(_ ops: [[String: Any]]) async -> String? {
+        guard let c = client else { return "Not connected to your PC." }
+        do {
+            let doc = try await c.workspaceOps(ops)
+            applyWorkspace(doc)
+            Haptics.selection()
+            return nil
+        } catch {
+            await loadWorkspace()
             return c.problem(for: error).message
         }
     }

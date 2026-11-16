@@ -55,6 +55,12 @@ struct ContinueControl: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+        .onAppear {
+            // Opened from the Sessions list after a 409: show the choices at once.
+            if conflict == nil, let b = store.takeConflict(id) {
+                conflict = b
+            }
+        }
     }
 
     private func run(fork: Bool) {

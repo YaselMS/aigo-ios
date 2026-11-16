@@ -16,6 +16,10 @@ struct SessionView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var transcript = TranscriptModel()
     @StateObject private var terminal = TerminalModel()
+    /// Structured chat of a chat-mode session (host API §7k).
+    @StateObject private var chat = ChatModel()
+    @State private var switchingMode = false
+    @State private var confirmTerminal = false
     @State private var tab: SessionTab = .chat
     @State private var draft = ""
     @State private var sending = false
@@ -49,6 +53,8 @@ struct SessionView: View {
 
                 Group {
                     switch tab {
+                    case .chat where s.isChat:
+                        ChatThreadView(model: chat)
                     case .chat where s.isAgent:
                         ChatView(model: transcript)
                     case .changes:
@@ -91,6 +97,7 @@ struct SessionView: View {
         .onDisappear {
             transcript.stop()
             terminal.stop()
+            chat.stop()
         }
         .onChange(of: tab) { _, newTab in
             terminal.debounceNanos = newTab == .terminal ? 400_000_000 : 800_000_000
@@ -105,9 +112,14 @@ struct SessionView: View {
                 wasInBackground = true
             case .active:
                 if wasInBackground {
-                    // iOS suspended the sockets: attach again for a fresh snapshot.
+                    // iOS suspended the sockets: attach again for a fresh snapshot
+                    // (chat: replay what was missed from the last seq).
                     wasInBackground = false
-                    terminal.resume()
+                    if session?.isChat ?? false {
+                        chat.resync()
+                    } else {
+                        terminal.resume()
+                    }
                 }
             default:
                 break
@@ -117,9 +129,22 @@ struct SessionView: View {
             // The app switched to another address of this PC.
             transcript.stop()
             terminal.stop()
+            chat.stop()
+            startStreams()
+        }
+        .onChange(of: session?.isChat ?? false) { _, nowChat in
+            // Switched between chat and terminal (here or on another device).
+            transcript.stop()
+            terminal.stop()
+            chat.stop()
+            tab = nowChat ? .chat : .terminal
             startStreams()
         }
         .onChange(of: session?.isRunning ?? false) { wasRunning, running in
+            if session?.isChat ?? false {
+                if running && !wasRunning { chat.resync() }
+                return
+            }
             if running && !wasRunning {
                 terminal.reconnect()
                 if let c = store.client, session?.isAgent ?? false {
@@ -149,10 +174,22 @@ struct SessionView: View {
         } message: {
             Text("It disappears from Aigo on every device.")
         }
+        .confirmationDialog("Open in the terminal?", isPresented: $confirmTerminal, titleVisibility: .visible) {
+            Button("Stop the turn and open the terminal") {
+                switchMode("terminal")
+            }
+        } message: {
+            Text("A turn is running. Switching stops it, then the same conversation continues in a terminal.")
+        }
     }
 
     private func startStreams() {
         guard let c = store.client else { return }
+        if session?.isChat ?? false {
+            // A chat session has no PTY: no attach, no transcript file stream.
+            chat.start(client: c, sessionID: sessionID)
+            return
+        }
         let running = session?.isRunning ?? false
         terminal.debounceNanos = tab == .terminal ? 400_000_000 : 800_000_000
         terminal.setVisible(tab == .terminal)
@@ -254,14 +291,35 @@ struct SessionView: View {
     }
 
     private func tabBar(_ s: SessionInfo) -> some View {
-        let tabs: [SessionTab] = s.isAgent ? [.chat, .terminal, .changes] : [.terminal, .changes]
+        let tabs: [SessionTab]
+        if s.isChat {
+            // Terminal here switches the session's mode (host API §7k).
+            tabs = store.canSwitchMode ? [.chat, .terminal, .changes] : [.chat, .changes]
+        } else {
+            tabs = s.isAgent ? [.chat, .terminal, .changes] : [.terminal, .changes]
+        }
         return HStack(spacing: 6) {
             ForEach(tabs, id: \.self) { t in
                 let on = t == tab
                 Button {
-                    tab = t
+                    if s.isChat && t == .terminal {
+                        Haptics.tap()
+                        if chat.isRunning {
+                            confirmTerminal = true
+                        } else {
+                            switchMode("terminal")
+                        }
+                    } else {
+                        tab = t
+                    }
                 } label: {
-                    Text(t.rawValue)
+                    Group {
+                        if s.isChat && t == .terminal && switchingMode {
+                            ProgressView().controlSize(.small).tint(Theme.text)
+                        } else {
+                            Text(t.rawValue)
+                        }
+                    }
                         .font(.aigo(.footnote, on ? .semibold : .regular))
                         .foregroundStyle(on ? Theme.bg : Theme.text)
                         .frame(maxWidth: .infinity, minHeight: Theme.buttonHeight)
@@ -282,7 +340,8 @@ struct SessionView: View {
     /// One line: what it is doing now, with Stop (working) or Resume (exited).
     @ViewBuilder
     private func statusStrip(_ s: SessionInfo) -> some View {
-        let active = s.isRunning && (s.status == .working || s.status == .stalled)
+        // Chat sessions: Stop sits in the composer while a turn runs.
+        let active = !s.isChat && s.isRunning && (s.status == .working || s.status == .stalled)
         if active || !s.isRunning {
             HStack(spacing: 8) {
                 StatusDot(status: s.status, size: 8)
@@ -329,6 +388,37 @@ struct SessionView: View {
 
     @ViewBuilder
     private func bottomArea(_ s: SessionInfo) -> some View {
+        if s.isChat {
+            chatBottom(s)
+        } else {
+            terminalBottom(s)
+        }
+    }
+
+    /// Chat: requests are answered inline in the timeline; the composer
+    /// sends (a stopped chat resumes on the next message).
+    private func chatBottom(_ s: SessionInfo) -> some View {
+        VStack(spacing: 8) {
+            if let banner = banner {
+                InlineBanner(text: banner) {
+                    withAnimation { self.banner = nil }
+                }
+                .transition(.opacity)
+            }
+            if tab == .chat {
+                ChatComposer(model: chat, placeholder: "Message \(store.agentName(s.agent))…") { err in
+                    withAnimation { banner = err }
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 8)
+        .padding(.bottom, 8)
+        .background(Theme.bg)
+    }
+
+    @ViewBuilder
+    private func terminalBottom(_ s: SessionInfo) -> some View {
         let pending = store.pendingItems(for: sessionID)
         VStack(spacing: 8) {
             if let banner = banner {
@@ -446,7 +536,35 @@ struct SessionView: View {
     private var actionsMenu: some View {
         Menu {
             if let s = session {
-                if s.isRunning {
+                if s.isChat {
+                    if chat.isRunning {
+                        Button {
+                            act { await chat.interrupt() }
+                        } label: {
+                            Label("Stop turn", systemImage: "stop.circle")
+                        }
+                    }
+                    if store.canSwitchMode {
+                        Button {
+                            if chat.isRunning { confirmTerminal = true } else { switchMode("terminal") }
+                        } label: {
+                            Label("Open in terminal", systemImage: "terminal")
+                        }
+                    }
+                } else if store.canSwitchMode && s.canChat && !(s.agentSessionId ?? "").isEmpty {
+                    Button {
+                        switchMode("chat")
+                    } label: {
+                        Label("Back to chat", systemImage: "bubble.left.and.bubble.right")
+                    }
+                }
+                if s.isRunning && s.isChat {
+                    Button(role: .destructive) {
+                        confirmKill = true
+                    } label: {
+                        Label("Stop the harness…", systemImage: "xmark.octagon")
+                    }
+                } else if s.isRunning {
                     Button {
                         act { await store.interrupt(sessionID) }
                     } label: {
@@ -518,6 +636,20 @@ struct SessionView: View {
             }
             sending = false
             terminal.scheduleRefresh()
+        }
+    }
+
+    /// POST /sessions/{id}/mode; the view follows the session's new mode.
+    private func switchMode(_ mode: String) {
+        guard !switchingMode else { return }
+        switchingMode = true
+        banner = nil
+        Task {
+            if let err = await store.setMode(sessionID, mode) {
+                Haptics.error()
+                withAnimation { banner = err }
+            }
+            switchingMode = false
         }
     }
 

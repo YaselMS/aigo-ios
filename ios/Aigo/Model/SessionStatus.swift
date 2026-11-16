@@ -66,6 +66,10 @@ func folderName(_ path: String?) -> String {
 extension SessionInfo {
     var isRunning: Bool { (state ?? "running") != "exited" }
     var isAgent: Bool { kind == "agent" || !(agent ?? "").isEmpty }
+    /// Structured chat session (host API §7k): no PTY, the chat stream instead.
+    var isChat: Bool { mode == "chat" }
+    /// Codex or Claude Code: can switch between chat and terminal.
+    var canChat: Bool { agent == "codex" || agent == "claude" }
 
     var status: SessionStatus {
         if !isRunning { return .exited }

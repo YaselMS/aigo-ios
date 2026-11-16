@@ -12,6 +12,8 @@ struct HomeView: View {
     @State private var killing: SessionInfo?
     @State private var removing: SessionInfo?
     @State private var banner: String?
+    /// Version label next to the wordmark (#67); tap the wordmark to toggle it.
+    @AppStorage("showVersionLabel") private var showVersion = true
 
     var body: some View {
         let board = store.board
@@ -99,10 +101,34 @@ struct HomeView: View {
     private func header(_ board: [BoardColumn: [BoardCard]]) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                AigoWordmark(size: 17)
+                Button {
+                    Haptics.selection()
+                    withAnimation(.easeInOut(duration: 0.15)) { showVersion.toggle() }
+                } label: {
+                    HStack(alignment: .lastTextBaseline, spacing: 6) {
+                        AigoWordmark(size: 17)
+                        if showVersion {
+                            Text("v\(UpdateChecker.currentVersion)")
+                                .font(.aigo(size: 11))
+                                .foregroundStyle(Theme.secondary)
+                                .fixedSize()
+                                .transition(.opacity)
+                        }
+                    }
+                    .frame(minHeight: 40)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text("Aigo version \(UpdateChecker.currentVersion)"))
+                .accessibilityHint(Text(showVersion ? "Hides the version" : "Shows the version"))
                 Spacer(minLength: 8)
                 HostSwitcher()
                     .layoutPriority(1)
+                if store.hasWorkspace {
+                    iconButton("list.bullet", label: "Sessions") {
+                        store.path.append(.sessions)
+                    }
+                }
                 iconButton("magnifyingglass", label: "Search") {
                     store.showSearch = true
                 }

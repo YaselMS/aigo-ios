@@ -38,6 +38,8 @@ struct SessionInfo: Codable, Identifiable, Equatable {
     var seenAt: String?
     var finishedAt: String?
     var external: Bool?
+    /// "chat" (structured chat, host API §7k) or "terminal"; older hosts omit it (= terminal).
+    var mode: String?
 }
 
 /// agentevents.External: an agent started outside Aigo, known from its hooks
@@ -82,6 +84,8 @@ struct SearchItem: Codable, Identifiable, Equatable {
     var harness: String?       // claude | codex | pi | gentle-shell | opencode | terminal | command | <agent>
     var resumable: Bool?
     var live: LiveWhere?
+    /// Helper conversations (sub-agents, titling) the lists skip.
+    var helper: Bool?
 }
 
 /// Where a conversation runs now (search item `live`, 409 `live`).
@@ -382,6 +386,8 @@ struct PairResponse: Decodable {
 
 struct ErrorBody: Decodable {
     var error: String?
+    /// Machine-readable reason (e.g. `trust`, `not_open`, `running_outside`, `conflict`).
+    var code: String?
 }
 
 /// Go marshals time.Time as RFC 3339 with up to 9 fractional digits; the

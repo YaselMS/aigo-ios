@@ -26,6 +26,8 @@ struct RootView: View {
                                 ExternalConversationView(key: key)
                             case .settings:
                                 SettingsView()
+                            case .sessions:
+                                SessionsView()
                             }
                         }
                 }
