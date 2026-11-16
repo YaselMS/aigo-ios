@@ -9,8 +9,8 @@ ISSUES.md. Code-level detail: [ios/README.md](ios/README.md).
 
 A native SwiftUI client (iOS 17+, iPhone and iPad) for the Aigo host daemon on a Windows PC. It pairs
 once, then talks to the host API directly over TLS pinned to the PC's certificate, with a per-device
-token. No Aigo account or server is involved. **Current version: v0.3.8** (2026-11-14), paired with
-desktop host v0.4.0.
+token. No Aigo account or server is involved. **Current version: v0.4.0** (2026-11-16), paired with
+desktop host v0.5.0 (older hosts keep the v0.3 views).
 
 ## Priorities (host north star, 2026-11-11)
 
@@ -29,11 +29,11 @@ ios/Shared/            compiled into app + widget: activity attributes, intents,
 ios/Aigo/App/          entry, RootView, NotificationManager
 ios/Aigo/Model/        Codable mirrors of host JSON, pairing link, status wording
 ios/Aigo/Net/          PinnedSessionDelegate (cert pin), APIClient (REST), LiveSocket (WS + reconnect)
-ios/Aigo/Store/        AppStore (single @MainActor source of truth), TranscriptModel, TerminalModel,
-                       DesktopModel, HostVault (Keychain), AppearanceStore, UpdateChecker
+ios/Aigo/Store/        AppStore (single @MainActor source of truth, workspace), TranscriptModel, ChatModel,
+                       TerminalModel, DesktopModel, HostVault (Keychain), AppearanceStore, UpdateChecker
 ios/Aigo/Terminal/     TerminalSurface: SwiftTerm (SPM, pinned in project.yml) kept at the PTY size, gestures, palette
-ios/Aigo/Views/        Home (board tabs), Session (Chat | Terminal | Changes), Desktop, NewWork, Search,
-                       Pair, QR scanner, Settings
+ios/Aigo/Views/        Home (board tabs), Session (Chat | Terminal | Changes), ChatThreadView + ChatMarkdown
+                       (structured chat), Sessions (workspace list), Desktop, NewWork, Search, Pair, QR, Settings
 ios/AigoWidgets/       Live Activity / Dynamic Island
 scripts/               package-ipa.sh, verify-ipa.sh
 .github/workflows/ios.yml
@@ -65,8 +65,9 @@ The user signs the unsigned IPA with Signulous (or SideStore) and installs it. C
 ## Host API dependencies
 
 Mirror the host's JSON exactly; the host's `docs/API.md` and `docs/ARCHITECTURE.md` §4 are the
-contract. The app reads `host.capabilities` from the events snapshot only for `sessions.continue`
-(Continue); otherwise it tolerates missing fields (e.g. the remote desktop monitor list).
+contract. The app reads `host.capabilities` from the events snapshot for `sessions.continue` (Continue),
+`sessions.mode` (chat <-> terminal switch) and `workspace` (Sessions list); the chat view follows the
+session's `mode`. Otherwise it tolerates missing fields (e.g. the remote desktop monitor list).
 
 | Feature | Endpoints | Host doc |
 |---|---|---|
@@ -74,7 +75,9 @@ contract. The app reads `host.capabilities` from the events snapshot only for `s
 | Live state | `WS /events` (snapshot + `session.*`, `inbox.*`, `external.updated`, `board.updated`, `notify`) | ARCHITECTURE §1, API.md §1–§4 |
 | Board, seen, search | session `board` fields, `POST /sessions/{id}/seen`, `/viewed`, `GET /search` | API.md §1–§5 |
 | Continue (goal 2) | search items `harness`, `resumable`, `live`; `POST /continue` (409 `running_outside` → fork / watch), `POST /continue/watch`; capability `sessions.continue` (`Views/ContinueControl.swift`) | API.md §7j |
-| Chat | `WS /sessions/{id}/transcript`, `WS /external/{key}/transcript`, `POST …/prompt`, `…/menu`, `POST /approvals/{id}` | API.md §5a (not yet §7h paging) |
+| Structured chat (#97) | session `mode:"chat"`; `WS /sessions/{id}/chat?since=<seq>` (snapshot, `item.*`, `thread.update`, `older`); `POST …/chat/send·respond·interrupt·settings` with `clientId`; `POST /sessions/{id}/mode`; capabilities `chat`, `sessions.mode` (`Store/ChatModel.swift`, `Views/ChatThreadView.swift`) | API.md §7k |
+| Sessions list (#102) | `GET /workspace?resolve=1`, `POST /workspace/ops`, `workspace.updated` on `/events`, `GET /search` paging (`offset`); capability `workspace` (`Views/SessionsView.swift`) | API.md §7l |
+| Transcript (terminal-mode / outside) | `WS /sessions/{id}/transcript`, `WS /external/{key}/transcript`, `POST …/prompt`, `…/menu`, `POST /approvals/{id}` (`option` N for chat questions) | API.md §5a (not yet §7h paging) |
 | Terminal | `WS /sessions/{id}/attach?history=3000` (size + raw replay protocol, `hello.terminal`, `{"type":"report"}`), `…/input` (reports on older hosts), `…/keys`, `GET …/screen` | API.md §6 |
 | Session control | `…/interrupt`, `…/kill`, `…/restart`, `DELETE /sessions/{id}` | ARCHITECTURE §4 |
 | New work | `GET /agents`, `GET /recent-dirs`, `POST /sessions` | ARCHITECTURE §4 |
@@ -84,7 +87,15 @@ contract. The app reads `host.capabilities` from the events snapshot only for `s
 Not used yet (host has them; iPhone catch-up #66/#67): themes §7c, device looks §7e, sounds §7f,
 usage §7g, transcript paging §7h, sent-by §7b, `POST /sessions/{id}/stop` (#77).
 
-## Current features (v0.3.8)
+## Current features (v0.4.0)
+
+v0.4.0: structured chat for chat-mode Codex / Claude sessions (bubbles, streaming markdown, tool rows
+with output and coloured diffs, inline approval / question cards with the harness's options, plan
+checklist, model / effort / access pickers, Stop during a turn, Queue, Terminal switches the mode,
+seq replay on reconnect / foreground / network change); Sessions list shared with the desktop (Pinned
+cards, sections, projects, Recent, collapsible per device, long-press pin / rename / move / close /
+remove); version label next to the wordmark (tap toggles).
+
 
 Board as four tabs with counts; needs-you cards (swipe or Approve/Deny; destructive commands need a
 second tap); conversation tabs Chat | Terminal | Changes; live terminal with direct typing, Ctrl latch,
@@ -95,6 +106,11 @@ Activity with Approve/Deny; mono fonts and text size; update notice.
 
 ## Built but not yet tested on a device
 
+- v0.4.0: chat (#97) against desktop v0.5.0: Codex and Claude chat sessions, approvals (Claude
+  trust card, destructive second tap), questions, model / effort / access, Stop, Queue, Terminal
+  switch and Back to chat, resync after background; Sessions (#102): pin / section / rename on the
+  phone shows on the desktop and back, Continue from a row, 409 → read-only view with the choices;
+  version label (#67). On older hosts nothing changes (no Sessions button, no chat).
 - v0.3.8: Continue (#95, goal 2): search and recent sessions show harness, project, activity and
   where it runs; Continue → `POST /continue` → the session's terminal; running in another window →
   host message, Continue a copy here, Notify me when it ends; Continue on outside-Aigo Working cards

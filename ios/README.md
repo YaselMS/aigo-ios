@@ -1,6 +1,6 @@
 # Aigo for iPhone
 
-Native SwiftUI client for the Aigo host daemon (protocol v1), v0.3.8. It pairs with
+Native SwiftUI client for the Aigo host daemon (protocol v1), v0.4.0. It pairs with
 a PC, shows what every agent is doing, lets you answer approvals in a row,
 chat with a session, drive its terminal, continue sessions, and start new work.
 Priorities follow the host's `docs/NORTH_STAR.md`: the terminal must be
@@ -8,6 +8,11 @@ trustworthy first (SwiftTerm 1.20.0 since v0.3.6; socket reports, raw replays
 and first-tap click since v0.3.7, for host v0.4.0+). Goal 2 since v0.3.8: search shows each
 result's harness and where it runs, and **Continue** (`POST /continue`, `POST /continue/watch`) opens
 the resumed session's terminal; shown only when host info `capabilities` has `sessions.continue`.
+v0.4.0 (host v0.5.0): chat-mode Codex / Claude sessions open as a **structured chat** (host API
+§7k: `WS /sessions/{id}/chat?since=<seq>`, `POST …/chat/{command}`, `POST …/mode`; `ChatModel`,
+`ChatThreadView`, `ChatMarkdown`), and the **Sessions** list (§7l workspace: Pinned, sections,
+projects, Recent; `SessionsView`) is shared with the desktop. Hosts without the `chat` /
+`workspace` capabilities keep the v0.3 views.
 
 ## Build
 
