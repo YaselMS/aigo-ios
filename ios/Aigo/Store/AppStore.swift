@@ -1198,6 +1198,59 @@ final class AppStore: ObservableObject {
         await perform { try await $0.kill(sessionID) }
     }
 
+    /// Stop: ends the running turn (POST /sessions/{id}/interrupt; the host
+    /// routes chat sessions to the chat's own interrupt). The session stays.
+    func stop(_ sessionID: String) async -> String? {
+        await interrupt(sessionID)
+    }
+
+    /// Close: ends the session's process gracefully (POST /sessions/{id}/stop:
+    /// interrupt, Ctrl+C, then kill). Hosts without /stop get a kill.
+    func close(_ sessionID: String) async -> String? {
+        guard let c = client else { return "Not connected to your PC." }
+        do {
+            try await c.stopSession(sessionID)
+            return nil
+        } catch let e as APIError where e.status == 404 || e.status == 405 {
+            return await kill(sessionID)
+        } catch {
+            return c.problem(for: error).message
+        }
+    }
+
+    /// Stop / Kill / Looks good on several sessions (Sessions select mode).
+    /// Returns the first error, after trying every session.
+    func stopAll(_ ids: [String]) async -> String? {
+        await each(ids) { await self.stop($0) }
+    }
+
+    func killAll(_ ids: [String]) async -> String? {
+        await each(ids) { await self.kill($0) }
+    }
+
+    func markSeenAll(_ ids: [String]) async -> String? {
+        await each(ids) { await self.markSeen($0) }
+    }
+
+    private func each(_ ids: [String], _ op: (String) async -> String?) async -> String? {
+        var first: String?
+        for id in ids {
+            if let err = await op(id), first == nil { first = err }
+        }
+        if first == nil { Haptics.success() } else { Haptics.error() }
+        return first
+    }
+
+    /// Recent Aigo sessions to pick up again (Home "Continue"): newest first,
+    /// skipping those already in Needs you or Working.
+    func recentSessions(limit: Int = 4) -> [SessionInfo] {
+        let b = board
+        let onBoard = Set(((b[.ask] ?? []) + (b[.work] ?? [])).compactMap { $0.session?.id ?? $0.item?.sessionId })
+        return sortedByActivity(sessions.filter { !onBoard.contains($0.id) && ($0.isAgent || $0.isRunning) })
+            .prefix(limit)
+            .map { $0 }
+    }
+
     func restart(_ sessionID: String) async -> String? {
         guard let c = client else { return "Not connected to your PC." }
         do {

@@ -11,7 +11,7 @@ struct RootView: View {
             if store.hosts.isEmpty {
                 NavigationStack {
                     PairView(draft: store.pairDraft, onDone: nil)
-                        .navigationTitle("Pair your PC")
+                        .navigationTitle("Connect a PC")
                         .navigationBarTitleDisplayMode(.inline)
                         .toolbarBackground(Theme.bg, for: .navigationBar)
                 }
@@ -51,16 +51,16 @@ struct RootView: View {
             .environmentObject(store)
             .environmentObject(appearance)
             .environment(\.font, .aigo(.body))
-            .preferredColorScheme(.dark)
-            .tint(Theme.lime)
+            .preferredColorScheme(appearance.colorScheme)
+            .tint(Theme.accent)
         }
         .sheet(isPresented: $store.showNewWork) {
             NewWorkView(preferredAgent: store.newWorkAgent)
                 .environmentObject(store)
                 .environmentObject(appearance)
                 .environment(\.font, .aigo(.body))
-                .preferredColorScheme(.dark)
-                .tint(Theme.lime)
+                .preferredColorScheme(appearance.colorScheme)
+                .tint(Theme.accent)
                 .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $store.showSearch) {
@@ -68,8 +68,8 @@ struct RootView: View {
                 .environmentObject(store)
                 .environmentObject(appearance)
                 .environment(\.font, .aigo(.body))
-                .preferredColorScheme(.dark)
-                .tint(Theme.lime)
+                .preferredColorScheme(appearance.colorScheme)
+                .tint(Theme.accent)
                 .presentationDragIndicator(.visible)
         }
         .fullScreenCover(isPresented: Binding(get: { store.showDesktop && !store.hosts.isEmpty },
@@ -79,7 +79,7 @@ struct RootView: View {
                 .environmentObject(appearance)
                 .environment(\.font, .aigo(.body))
                 .preferredColorScheme(.dark)
-                .tint(Theme.lime)
+                .tint(Theme.accent)
         }
         .onChange(of: scenePhase) { _, phase in
             store.scenePhaseChanged(phase)

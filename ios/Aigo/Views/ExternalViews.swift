@@ -24,12 +24,12 @@ struct ExternalCard: View {
                         .multilineTextAlignment(.leading)
                     Text(meta)
                         .font(.aigo(.caption2))
-                        .foregroundStyle(Theme.secondary)
+                        .foregroundStyle(Theme.muted)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Text(line)
                         .font(.aigo(.footnote))
-                        .foregroundStyle(needs ? Theme.coralText : Theme.secondary)
+                        .foregroundStyle(needs ? Theme.ask : Theme.muted)
                         .lineLimit(3)
                         .multilineTextAlignment(.leading)
                 }
@@ -46,8 +46,8 @@ struct ExternalCard: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .aigoCard(border: needs ? Theme.coral : Color(aigoHex: 0x2A2D31),
-                  fill: needs ? Theme.coralWash : Theme.surface)
+        .aigoCard(border: needs ? Theme.askLine : Theme.line,
+                  fill: needs ? Theme.askSoft : Theme.panel)
     }
 
     private var meta: String {
@@ -84,10 +84,9 @@ struct ExternalConversationView: View {
                     dismiss()
                 } label: {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Theme.text)
+                        .font(.system(size: 17, weight: Theme.iconWeight))
+                        .foregroundStyle(Theme.text2)
                         .frame(width: 40, height: 40)
-                        .background(Theme.softWhite, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -99,7 +98,7 @@ struct ExternalConversationView: View {
                         .lineLimit(1)
                     Text(target?.subtitle ?? "outside Aigo")
                         .font(.aigo(.caption2))
-                        .foregroundStyle(Theme.secondary)
+                        .foregroundStyle(Theme.muted)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
@@ -108,17 +107,17 @@ struct ExternalConversationView: View {
                 .accessibilityAddTraits(.isHeader)
                 Text("Read-only")
                     .font(.aigo(size: 11))
-                    .foregroundStyle(Theme.secondary)
+                    .foregroundStyle(Theme.muted)
                     .fixedSize()
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
-                    .background(Theme.surface2, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+                    .background(Theme.raised, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
             }
             .padding(.horizontal, 14)
             .padding(.top, 4)
             .padding(.bottom, 10)
             .overlay(alignment: .bottom) {
-                Rectangle().fill(Theme.lineSoft).frame(height: 1)
+                Rectangle().fill(Theme.line).frame(height: 1)
             }
 
             ChatView(model: transcript)
@@ -132,7 +131,7 @@ struct ExternalConversationView: View {
             } else {
                 Text("Started outside Aigo. Answer it in its own terminal on the PC.")
                     .font(.aigo(.caption))
-                    .foregroundStyle(Theme.secondary)
+                    .foregroundStyle(Theme.muted)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity)
                     .padding(.horizontal, 16)

@@ -1,18 +1,17 @@
 import SwiftUI
 
-/// Lime = working, coral = needs you, ice = done, grey outline = idle.
+/// Status dot: work = working, ask = needs you, review = finished, faint
+/// outline = idle.
 struct StatusDot: View {
     let status: SessionStatus
-    var size: CGFloat = 10
+    var size: CGFloat = 8
 
     var body: some View {
         ZStack {
             if let color = status.color {
-                Circle()
-                    .fill(color)
-                    .shadow(color: status == .working ? color.opacity(0.55) : .clear, radius: 4)
+                Circle().fill(color)
             } else {
-                Circle().strokeBorder(Theme.idle, lineWidth: 1.5)
+                Circle().strokeBorder(Theme.faint, lineWidth: 1.2)
             }
         }
         .frame(width: size, height: size)
@@ -20,7 +19,34 @@ struct StatusDot: View {
     }
 }
 
-/// Lowercase "aigo" with a lime dot, in the app font.
+/// Glyph of a sub-agent or task (session `children`): pending ring, working
+/// dot, done check, failed cross.
+struct ChildGlyph: View {
+    let status: String?
+
+    var body: some View {
+        Group {
+            switch status ?? "" {
+            case "working":
+                Circle().fill(Theme.work).frame(width: 6, height: 6)
+            case "done":
+                Image(systemName: "checkmark")
+                    .font(.system(size: 10, weight: .regular))
+                    .foregroundStyle(Theme.done)
+            case "failed":
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .regular))
+                    .foregroundStyle(Theme.danger)
+            default:
+                Circle().strokeBorder(Theme.faint, lineWidth: 1).frame(width: 6, height: 6)
+            }
+        }
+        .frame(width: 12, height: 12)
+        .accessibilityLabel(Text(status ?? "pending"))
+    }
+}
+
+/// Lowercase "aigo" with an accent dot.
 struct Wordmark: View {
     var size: CGFloat = 17
 
@@ -33,10 +59,10 @@ struct Wordmark: View {
 extension ConnectionState {
     var dotColor: Color {
         switch self {
-        case .online: return Theme.lime
-        case .connecting: return Theme.secondary
-        case .offline: return Theme.coral
-        case .unpaired: return Theme.idle
+        case .online: return Theme.add
+        case .connecting: return Theme.muted
+        case .offline: return Theme.danger
+        case .unpaired: return Theme.faint
         }
     }
 
@@ -50,13 +76,14 @@ extension ConnectionState {
     }
 }
 
-/// Host name pill: a menu to switch PCs, see the connection and pair another PC.
+/// Compact PC switcher ("● kdrewpc ▾", no box): the paired PCs with their
+/// status, Add a PC, the PC's screen and Settings.
 struct HostSwitcher: View {
     @EnvironmentObject private var store: AppStore
 
     var body: some View {
         Menu {
-            Section("Paired PCs") {
+            Section("PCs") {
                 ForEach(store.hosts) { host in
                     Button {
                         Haptics.selection()
@@ -67,8 +94,13 @@ struct HostSwitcher: View {
                         } else {
                             Label(hostName(host), systemImage: "desktopcomputer")
                         }
-                        Text(host.id == store.activeHostID ? "\(host.addr) · \(store.connection.label)" : host.addr)
+                        Text(host.id == store.activeHostID ? store.connection.label.capitalizedFirst : "Paired · tap to switch")
                     }
+                }
+                Button {
+                    store.openPairSheet()
+                } label: {
+                    Label("Add a PC", systemImage: "plus")
                 }
             }
             Section {
@@ -87,11 +119,6 @@ struct HostSwitcher: View {
                     }
                 }
                 Button {
-                    store.openPairSheet()
-                } label: {
-                    Label("Pair another PC", systemImage: "plus.viewfinder")
-                }
-                Button {
                     store.path.append(.settings)
                 } label: {
                     Label("Settings", systemImage: "gearshape")
@@ -101,20 +128,18 @@ struct HostSwitcher: View {
             HStack(spacing: 6) {
                 Circle()
                     .fill(store.connection.dotColor)
-                    .frame(width: 7, height: 7)
+                    .frame(width: 6, height: 6)
                 Text(store.hostLabel)
-                    .font(.aigo(size: 12.5))
-                    .foregroundStyle(Theme.text)
+                    .font(.aigo(.footnote, .medium))
+                    .foregroundStyle(Theme.text2)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                Text("▾")
-                    .font(.aigo(size: 12.5))
-                    .foregroundStyle(Theme.secondary)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: Theme.iconWeight))
+                    .foregroundStyle(Theme.muted)
             }
-            .padding(.horizontal, 12)
-            .frame(minHeight: 36)
-            .background(Theme.softWhite, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
-            .frame(minHeight: 44)
+            .padding(.horizontal, 6)
+            .frame(minHeight: 40)
             .contentShape(Rectangle())
         }
         .accessibilityLabel(Text("\(store.hostLabel), \(store.connection.label). Switch PC"))
@@ -125,22 +150,25 @@ struct HostSwitcher: View {
     }
 }
 
-/// Monospaced section label, e.g. "NEEDS YOU 2".
+extension String {
+    var capitalizedFirst: String { prefix(1).uppercased() + dropFirst() }
+}
+
+/// Quiet group label, e.g. "Needs you 2" (sentence case, muted).
 struct SectionHeader: View {
     let title: String
     var count: Int? = nil
-    var tint: Color = Theme.secondary
+    var tint: Color = Theme.muted
 
     var body: some View {
         HStack(spacing: 8) {
-            Text(title.uppercased())
-                .font(Theme.monoLabel)
-                .tracking(1.0)
+            Text(title)
+                .font(Theme.label)
                 .foregroundStyle(tint)
-            if let count = count {
+            if let count = count, count > 0 {
                 Text("\(count)")
-                    .font(Theme.monoLabel)
-                    .foregroundStyle(tint)
+                    .font(Theme.label)
+                    .foregroundStyle(Theme.faint)
                     .contentTransition(.numericText())
             }
             Spacer(minLength: 0)
@@ -153,7 +181,7 @@ struct SectionHeader: View {
 /// Inline message strip (server errors).
 struct InlineBanner: View {
     let text: String
-    var tint: Color = Theme.coral
+    var tint: Color = Theme.danger
     var onClose: (() -> Void)? = nil
 
     var body: some View {
@@ -170,7 +198,7 @@ struct InlineBanner: View {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
                         .font(.aigo(.footnote, .semibold))
-                        .foregroundStyle(Theme.secondary)
+                        .foregroundStyle(Theme.muted)
                         .frame(width: 44, height: 44)
                 }
                 .accessibilityLabel(Text("Dismiss"))
@@ -193,14 +221,13 @@ struct ConnectionProblemCard: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Image(systemName: problem.needsRepair ? "lock.trianglebadge.exclamationmark" : "wifi.exclamationmark")
-                    .foregroundStyle(Theme.coral)
+                    .foregroundStyle(Theme.danger)
                 Text(problem.needsRepair ? "Pairing needed" : "Not connected")
-                    .font(Theme.monoLabel)
-                    .tracking(0.8)
-                    .foregroundStyle(Theme.coral)
+                    .font(Theme.label)
+                    .foregroundStyle(Theme.danger)
                 Spacer(minLength: 0)
                 if store.connection == .connecting {
-                    ProgressView().controlSize(.small).tint(Theme.secondary)
+                    ProgressView().controlSize(.small).tint(Theme.muted)
                 }
             }
             Text(problem.message)
@@ -212,7 +239,7 @@ struct ConnectionProblemCard: View {
                     Button("Pair again") {
                         store.repairActiveHost()
                     }
-                    .buttonStyle(SoftButtonStyle(tint: Theme.coral, text: Theme.coralButtonText))
+                    .buttonStyle(SoftButtonStyle(tint: Theme.danger, text: Theme.danger))
                 }
                 Button {
                     Haptics.tap()
@@ -224,7 +251,7 @@ struct ConnectionProblemCard: View {
             }
         }
         .padding(14)
-        .aigoCard(border: Theme.coral.opacity(0.45), fill: Theme.coralWash)
+        .aigoCard(border: Theme.danger.opacity(0.35), fill: Theme.danger.opacity(0.08))
     }
 }
 
@@ -252,10 +279,10 @@ struct ActivityPulse: View {
 
     private var color: Color {
         switch status {
-        case .working, .stalled: return Theme.lime
-        case .needsYou: return Theme.coral
-        case .done: return Theme.ice
-        default: return Theme.idle
+        case .working, .stalled: return Theme.work
+        case .needsYou: return Theme.ask
+        case .done: return Theme.review
+        default: return Theme.faint
         }
     }
 
@@ -279,11 +306,11 @@ struct SkeletonRows: View {
         VStack(spacing: 0) {
             ForEach(0..<count, id: \.self) { _ in
                 HStack(alignment: .top, spacing: 12) {
-                    Circle().fill(Theme.surface2).frame(width: 10, height: 10).padding(.top, 5)
+                    Circle().fill(Theme.raised).frame(width: 10, height: 10).padding(.top, 5)
                     VStack(alignment: .leading, spacing: 8) {
-                        RoundedRectangle(cornerRadius: 4).fill(Theme.surface2).frame(width: 170, height: 13)
-                        RoundedRectangle(cornerRadius: 4).fill(Theme.surface2.opacity(0.7)).frame(width: 120, height: 10)
-                        RoundedRectangle(cornerRadius: 4).fill(Theme.surface2.opacity(0.5)).frame(maxWidth: .infinity).frame(height: 10)
+                        RoundedRectangle(cornerRadius: 4).fill(Theme.raised).frame(width: 170, height: 13)
+                        RoundedRectangle(cornerRadius: 4).fill(Theme.raised.opacity(0.7)).frame(width: 120, height: 10)
+                        RoundedRectangle(cornerRadius: 4).fill(Theme.raised.opacity(0.5)).frame(maxWidth: .infinity).frame(height: 10)
                     }
                 }
                 .padding(.vertical, 14)

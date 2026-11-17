@@ -4,7 +4,7 @@ import SwiftUI
 import WidgetKit
 
 /// Lock Screen card + Dynamic Island for the Aigo Live Activity (v0.3).
-/// Compact: the icon and two counts (coral = needs you, lime = working).
+/// Compact: the icon and two counts (orange = needs you, teal = working).
 /// Expanded / Lock Screen: the first needs-you item with Approve / Deny.
 /// Tapping elsewhere opens the board (aigo://home).
 struct AigoLiveActivityWidget: Widget {
@@ -13,7 +13,7 @@ struct AigoLiveActivityWidget: Widget {
             AigoLockScreenView(state: context.state,
                                hostName: context.attributes.hostName,
                                isStale: context.isStale)
-                .activityBackgroundTint(AigoPalette.background.opacity(0.94))
+                .activityBackgroundTint(AigoPalette.bg.opacity(0.94))
                 .activitySystemActionForegroundColor(AigoPalette.text)
                 .widgetURL(URL(string: "aigo://home"))
         } dynamicIsland: { context in
@@ -43,12 +43,12 @@ struct AigoLiveActivityWidget: Widget {
                 AigoMinimalCount(state: state, appearance: look)
             }
             .widgetURL(URL(string: "aigo://home"))
-            .keylineTint(state.needsYou > 0 ? AigoPalette.coral : AigoPalette.lime)
+            .keylineTint(state.needsYou > 0 ? AigoPalette.ask : AigoPalette.work)
         }
     }
 }
 
-/// "● 2  ● 3": coral needs-you count, lime working count (zeros hidden,
+/// "● 2  ● 3": needs-you count, working count (zeros hidden,
 /// except a lone 0 working when nothing else is shown).
 struct AigoCounts: View {
     let state: AigoActivityAttributes.ContentState
@@ -58,10 +58,10 @@ struct AigoCounts: View {
     var body: some View {
         HStack(spacing: 8) {
             if state.needsYou > 0 {
-                count(state.needsYou, dot: AigoPalette.coral, text: AigoPalette.coralText)
+                count(state.needsYou, dot: AigoPalette.ask, text: AigoPalette.ask)
             }
             if state.working > 0 || state.needsYou == 0 {
-                count(state.working, dot: AigoPalette.lime, text: AigoPalette.lime)
+                count(state.working, dot: AigoPalette.work, text: AigoPalette.work)
             }
         }
         .accessibilityElement(children: .ignore)
@@ -72,7 +72,7 @@ struct AigoCounts: View {
         HStack(spacing: 4) {
             Circle().fill(dot).frame(width: 7, height: 7)
             Text("\(n)")
-                .font(.custom(appearance.family.postScriptName(.semibold), fixedSize: fontSize))
+                .font(.system(size: fontSize, weight: .semibold))
                 .foregroundStyle(text)
                 .monospacedDigit()
         }
@@ -86,10 +86,10 @@ struct AigoMinimalCount: View {
     var body: some View {
         let needs = state.needsYou > 0
         HStack(spacing: 3) {
-            Circle().fill(needs ? AigoPalette.coral : AigoPalette.lime).frame(width: 6, height: 6)
+            Circle().fill(needs ? AigoPalette.ask : AigoPalette.work).frame(width: 6, height: 6)
             Text("\(needs ? state.needsYou : state.working)")
-                .font(.custom(appearance.family.postScriptName(.semibold), fixedSize: 12))
-                .foregroundStyle(needs ? AigoPalette.coralText : AigoPalette.lime)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(needs ? AigoPalette.ask : AigoPalette.work)
         }
     }
 }
@@ -116,13 +116,13 @@ struct AigoLockScreenView: View {
                 Text(hostName.isEmpty ? AigoActivityText.summary(state)
                                       : "\(hostName) · \(AigoActivityText.summary(state))")
                     .font(look.font(size: 12))
-                    .foregroundStyle(AigoPalette.secondary)
+                    .foregroundStyle(AigoPalette.muted)
                     .lineLimit(1)
                 Spacer(minLength: 0)
                 if isStale {
                     Text(state.updatedAt, style: .time)
                         .font(look.font(size: 11))
-                        .foregroundStyle(AigoPalette.secondary.opacity(0.8))
+                        .foregroundStyle(AigoPalette.muted.opacity(0.8))
                 }
             }
             AigoActivityCard(state: state, hostName: hostName, appearance: look, buttonHeight: 40)
@@ -131,7 +131,7 @@ struct AigoLockScreenView: View {
     }
 }
 
-/// The first needs-you item (coral card with Approve / Deny), or the busiest
+/// The first needs-you item (card with Approve / Deny), or the busiest
 /// working session.
 struct AigoActivityCard: View {
     let state: AigoActivityAttributes.ContentState
@@ -144,7 +144,7 @@ struct AigoActivityCard: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 if !needs {
-                    Circle().fill(AigoPalette.lime).frame(width: 7, height: 7)
+                    Circle().fill(AigoPalette.work).frame(width: 7, height: 7)
                 }
                 Text(state.headline.isEmpty ? (needs ? "An agent needs you" : "Working") : state.headline)
                     .font(appearance.font(size: 13, .semibold))
@@ -154,19 +154,19 @@ struct AigoActivityCard: View {
                 if needs && state.needsYou > 1 {
                     Text("1 of \(state.needsYou)")
                         .font(appearance.font(size: 11))
-                        .foregroundStyle(AigoPalette.secondary)
+                        .foregroundStyle(AigoPalette.muted)
                 }
             }
             if !state.context.isEmpty {
                 Text(state.context)
                     .font(appearance.font(size: 11))
-                    .foregroundStyle(AigoPalette.secondary)
+                    .foregroundStyle(AigoPalette.muted)
                     .lineLimit(1)
             }
             if !state.detail.isEmpty {
                 Text(state.detail)
                     .font(appearance.font(size: 11))
-                    .foregroundStyle(needs ? AigoPalette.coralText : AigoPalette.secondary)
+                    .foregroundStyle(needs ? AigoPalette.ask : AigoPalette.muted)
                     .lineLimit(2)
             }
             if !state.actionId.isEmpty {
@@ -174,15 +174,15 @@ struct AigoActivityCard: View {
             } else if needs {
                 Text("Open Aigo to answer")
                     .font(appearance.font(size: 11))
-                    .foregroundStyle(AigoPalette.secondary)
+                    .foregroundStyle(AigoPalette.muted)
             }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(needs ? AigoPalette.coralWash : AigoPalette.surface,
+        .background(needs ? AigoPalette.askSoft : AigoPalette.panel,
                     in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
-            .strokeBorder(needs ? AigoPalette.coral : AigoPalette.line, lineWidth: 1))
+            .strokeBorder(needs ? AigoPalette.askLine : AigoPalette.line, lineWidth: 1))
     }
 }
 
@@ -199,15 +199,15 @@ struct AigoDecisionButtons: View {
                 Text("Approve")
                     .font(appearance.font(size: 13, .bold))
                     .frame(maxWidth: .infinity, minHeight: height)
-                    .background(AigoPalette.coral.opacity(0.15), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
-                    .foregroundStyle(AigoPalette.coralButtonText)
+                    .background(AigoPalette.ask.opacity(0.15), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                    .foregroundStyle(AigoPalette.ask)
             }
             .buttonStyle(.plain)
             Button(intent: DecideApprovalIntent(actionId: actionId, approve: false)) {
                 Text("Deny")
                     .font(appearance.font(size: 13))
                     .frame(maxWidth: .infinity, minHeight: height)
-                    .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                    .background(AigoPalette.tint, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
                     .foregroundStyle(AigoPalette.text)
             }
             .buttonStyle(.plain)

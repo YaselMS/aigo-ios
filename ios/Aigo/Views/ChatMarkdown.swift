@@ -38,7 +38,7 @@ struct ChatMarkdown: View {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(marker)
                     .font(.aigo(.callout))
-                    .foregroundStyle(Theme.secondary)
+                    .foregroundStyle(Theme.muted)
                 Text(MarkdownBlocks.inline(t))
                     .font(.aigo(.callout))
                     .lineSpacing(4)
@@ -52,7 +52,7 @@ struct ChatMarkdown: View {
                 Rectangle().fill(Theme.line).frame(width: 2)
                 Text(MarkdownBlocks.inline(t))
                     .font(.aigo(.callout))
-                    .foregroundStyle(Theme.secondary)
+                    .foregroundStyle(Theme.muted)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
             }
@@ -65,12 +65,12 @@ struct ChatMarkdown: View {
                     .fixedSize()
                     .padding(8)
             }
-            .background(Theme.codeBg, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+            .background(Theme.term, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
             .textSelection(.enabled)
         case .code(let lang, let code):
             ChatCodeBlock(language: lang, code: code)
         case .rule:
-            Rectangle().fill(Theme.lineSoft).frame(height: 1)
+            Rectangle().fill(Theme.line).frame(height: 1)
         }
     }
 }
@@ -86,7 +86,7 @@ struct ChatCodeBlock: View {
             HStack {
                 Text(language.isEmpty ? "code" : language)
                     .font(.aigo(.caption2))
-                    .foregroundStyle(Theme.secondary)
+                    .foregroundStyle(Theme.muted)
                 Spacer()
                 Button {
                     UIPasteboard.general.string = code
@@ -99,7 +99,7 @@ struct ChatCodeBlock: View {
                 } label: {
                     Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
                         .font(.aigo(.caption2))
-                        .foregroundStyle(copied ? Theme.lime : Theme.secondary)
+                        .foregroundStyle(copied ? Theme.accent : Theme.muted)
                         .frame(minWidth: 40, minHeight: 32)
                         .contentShape(Rectangle())
                 }
@@ -117,8 +117,8 @@ struct ChatCodeBlock: View {
             }
             .textSelection(.enabled)
         }
-        .background(Theme.codeBg, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous).strokeBorder(Theme.lineSoft, lineWidth: 1))
+        .background(Theme.term, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous).strokeBorder(Theme.line, lineWidth: 1))
     }
 }
 
@@ -288,8 +288,8 @@ enum MarkdownBlocks {
             .filter { $0.inlinePresentationIntent?.contains(.code) == true }
             .map { $0.range }
         for r in codeRanges {
-            attributed[r].swiftUI.foregroundColor = Theme.iceText
-            attributed[r].swiftUI.backgroundColor = Theme.codeBg
+            attributed[r].swiftUI.foregroundColor = Theme.accentText
+            attributed[r].swiftUI.backgroundColor = Theme.term
         }
         return attributed
     }

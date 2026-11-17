@@ -102,14 +102,14 @@ struct PairView: View {
 
     private var intro: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Wordmark(size: 28)
+            Wordmark(size: 22)
             Text(introTitle)
                 .font(Theme.display)
                 .foregroundStyle(Theme.text)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("Aigo shows what every agent on your PC is doing and lets you answer them from here.")
+            Text("Two steps, once. Then you can follow and answer your agents from here.")
                 .font(.aigo(.callout))
-                .foregroundStyle(Theme.secondary)
+                .foregroundStyle(Theme.muted)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.bottom, 4)
@@ -119,7 +119,7 @@ struct PairView: View {
         if let d = draft, !d.hostName.isEmpty, !d.isComplete {
             return "Pair again with \(d.hostName)"
         }
-        return "Connect this iPhone to your PC"
+        return "Connect a PC"
     }
 
     private func step(_ n: Int, title: String, text: String) -> some View {
@@ -129,10 +129,10 @@ struct PairView: View {
     private func step<Extra: View>(_ n: Int, title: String, text: String, @ViewBuilder extra: () -> Extra) -> some View {
         HStack(alignment: .top, spacing: 14) {
             Text("\(n)")
-                .font(.aigo(.callout, .bold))
-                .foregroundStyle(Theme.onAccent)
-                .frame(width: 30, height: 30)
-                .background(Theme.lime, in: Circle())
+                .font(.aigo(.callout, .medium))
+                .foregroundStyle(Theme.accentText)
+                .frame(width: 28, height: 28)
+                .background(Theme.accentSoft, in: Circle())
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 10) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -141,7 +141,7 @@ struct PairView: View {
                         .foregroundStyle(Theme.text)
                     Text(text)
                         .font(.aigo(.callout))
-                        .foregroundStyle(Theme.secondary)
+                        .foregroundStyle(Theme.muted)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 extra()
@@ -199,7 +199,7 @@ struct PairView: View {
                     .keyboardType(.URL)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled(true)
-                    .font(Theme.mono)
+                    .font(Theme.body)
                     .focused($field, equals: .address)
                     .submitLabel(.next)
                     .onSubmit { field = .code }
@@ -215,7 +215,7 @@ struct PairView: View {
                     .lineLimit(2...4)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled(true)
-                    .font(Theme.monoSmall)
+                    .font(Theme.small)
                     .focused($field, equals: .fingerprint)
             }
             Button {
@@ -232,21 +232,20 @@ struct PairView: View {
 
     private func fieldBlock<F: View>(_ title: String, hint: String?, @ViewBuilder field: () -> F) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title.uppercased())
-                .font(Theme.monoLabel)
-                .tracking(0.8)
-                .foregroundStyle(Theme.secondary)
+            Text(title)
+                .font(Theme.label)
+                .foregroundStyle(Theme.muted)
             field()
                 .foregroundStyle(Theme.text)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
                 .frame(minHeight: 46)
-                .background(Theme.surface2, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+                .background(Theme.raised, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous).strokeBorder(Theme.line, lineWidth: 1))
             if let hint = hint {
                 Text(hint)
                     .font(.aigo(.footnote))
-                    .foregroundStyle(Theme.secondary)
+                    .foregroundStyle(Theme.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -255,10 +254,10 @@ struct PairView: View {
     private var trustNote: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "lock.shield")
-                .foregroundStyle(Theme.ice)
+                .foregroundStyle(Theme.muted)
             Text("The connection is encrypted and pinned to your PC's certificate. Nothing goes through a cloud service.")
                 .font(.aigo(.footnote))
-                .foregroundStyle(Theme.secondary)
+                .foregroundStyle(Theme.muted)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.top, 4)
@@ -268,7 +267,7 @@ struct PairView: View {
         ZStack {
             Theme.bg.opacity(0.75).ignoresSafeArea()
             VStack(spacing: 14) {
-                ProgressView().controlSize(.large).tint(Theme.lime)
+                ProgressView().controlSize(.large).tint(Theme.accent)
                 Text(hostName.isEmpty ? "Pairing…" : "Pairing with \(hostName)…")
                     .font(.aigo(.headline))
                     .foregroundStyle(Theme.text)

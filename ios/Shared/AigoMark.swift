@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The app icon drawn in SwiftUI: a dark rounded square, a lowercase "a" and
-/// a lime dot.
+/// The app icon drawn in SwiftUI: a rounded square, a lowercase "a" and an
+/// accent dot.
 struct AigoIconMark: View {
     var size: CGFloat = 20
     var appearance: AigoAppearance = .current
@@ -11,12 +11,12 @@ struct AigoIconMark: View {
             RoundedRectangle(cornerRadius: size * 5 / 18, style: .continuous)
                 .fill(AigoPalette.iconSquare)
             Text("a")
-                .font(.custom(appearance.family.postScriptName(.bold), fixedSize: size * 11 / 18))
-                .foregroundStyle(AigoPalette.text)
+                .font(.system(size: size * 11 / 18, weight: .semibold))
+                .foregroundStyle(Color(aigoHex: 0xE7E8EC))
                 .frame(width: size * 9 / 18, height: size, alignment: .center)
                 .offset(x: size * 3.6 / 18, y: -size * 0.5 / 18)
             Circle()
-                .fill(AigoPalette.lime)
+                .fill(AigoPalette.accent)
                 .frame(width: size * 4 / 18, height: size * 4 / 18)
                 .offset(x: size * 11.2 / 18, y: size * 9.6 / 18)
         }
@@ -25,7 +25,7 @@ struct AigoIconMark: View {
     }
 }
 
-/// Lowercase "aigo" with a lime dot.
+/// Lowercase "aigo" with an accent dot.
 struct AigoWordmark: View {
     var size: CGFloat = 17
     var appearance: AigoAppearance = .current
@@ -33,12 +33,12 @@ struct AigoWordmark: View {
     var body: some View {
         HStack(alignment: .lastTextBaseline, spacing: 2) {
             Text("aigo")
-                .font(.custom(appearance.family.postScriptName(.bold), fixedSize: size * appearance.size.scale))
-                .tracking(-0.6)
+                .font(.system(size: size * appearance.size.scale, weight: .semibold))
+                .tracking(-0.4)
                 .foregroundStyle(AigoPalette.text)
             Circle()
-                .fill(AigoPalette.lime)
-                .frame(width: size * 0.4, height: size * 0.4)
+                .fill(AigoPalette.accent)
+                .frame(width: size * 0.32, height: size * 0.32)
                 .padding(.bottom, size * 0.12)
         }
         .fixedSize()

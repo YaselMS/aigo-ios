@@ -17,11 +17,13 @@ struct SessionsGroup: Identifiable {
     var sectionId: String? = nil
 }
 
-/// Sessions (host API §7l, PhoneSessions mockup): Pinned cards, the user's
+/// Sessions (host API §7l, round 3): organisation only. Pinned, the user's
 /// sections, one group per project folder with two or more sessions, then
-/// Recent. Long-press a session to pin, rename, move to a section, close or
-/// remove it. The organisation is shared with the desktop through the
-/// host's workspace; which groups are collapsed stays on this device.
+/// Recent. One-line rows with a status dot; a chevron opens the session's
+/// own sub-agents and tasks (`children`). Long-press a session to pin,
+/// rename, move, mark reviewed, stop, close, kill or remove it; Select picks
+/// several for Stop / Kill / Mark reviewed / Move. The organisation is shared
+/// with the desktop; collapsed groups stay on this device.
 struct SessionsView: View {
     @EnvironmentObject private var store: AppStore
     @Environment(\.dismiss) private var dismiss
@@ -33,32 +35,47 @@ struct SessionsView: View {
     @State private var recentShown = 25
     @State private var opening: String?
     @AppStorage("sessionsCollapsed") private var collapsedRaw = ""
+    /// Rows showing their sub-agents and tasks.
+    @State private var expanded: Set<String> = []
+
+    @State private var selecting = false
+    @State private var selected: Set<String> = []
 
     @State private var renaming: SessionsRow?
     @State private var renameText = ""
-    @State private var newSectionFor: SessionsRow?
+    /// Workspace ids to move into the new section (empty: just create it).
+    @State private var newSectionMove: [String]?
     @State private var newSectionName = ""
+    @State private var renamingSection: WorkspaceSection?
+    @State private var sectionNameText = ""
     @State private var closing: SessionsRow?
+    /// Aigo session ids waiting for the Kill confirmation.
+    @State private var killing: [String]?
 
     private static let pageSize = 200
 
     var body: some View {
         let built = build()
+        let byId = SessionsView.index(built)
         VStack(spacing: 0) {
-            header(pinned: built.pinned)
+            header
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 10) {
+                LazyVStack(alignment: .leading, spacing: 0) {
                     if let banner {
                         InlineBanner(text: banner) { self.banner = nil }
+                            .padding(.bottom, 8)
                     }
                     if !loadedOnce && items.isEmpty {
                         SkeletonRows(count: 4)
                     } else if built.pinned.isEmpty && built.groups.allSatisfy({ $0.rows.isEmpty && $0.sectionId == nil }) {
                         Text("No sessions yet.")
                             .font(.aigo(.footnote))
-                            .foregroundStyle(Theme.secondary)
+                            .foregroundStyle(Theme.muted)
                             .frame(maxWidth: .infinity)
                             .padding(.top, 40)
+                    }
+                    if !built.pinned.isEmpty {
+                        groupView(SessionsGroup(id: "pinned", name: "Pinned", rows: built.pinned))
                     }
                     ForEach(built.groups) { group in
                         groupView(group)
@@ -68,30 +85,31 @@ struct SessionsView: View {
                             Task { await loadMore() }
                         } label: {
                             HStack(spacing: 8) {
-                                if loading { ProgressView().controlSize(.small).tint(Theme.secondary) }
+                                if loading { ProgressView().controlSize(.small).tint(Theme.muted) }
                                 Text("Load older sessions")
                             }
                         }
                         .buttonStyle(SecondaryButtonStyle())
                         .disabled(loading)
+                        .padding(.top, 12)
                     }
                 }
-                .padding(.horizontal, 12)
+                .frame(maxWidth: 760)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 10)
                 .padding(.top, 4)
                 .padding(.bottom, 12)
             }
             .refreshable { await reload() }
-            Text("Long-press a session: pin · move to section · rename · close")
-                .font(.aigo(.caption2))
-                .foregroundStyle(Theme.idle)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
+            if selecting {
+                selectionBar(byId)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
         .background(Theme.bg.ignoresSafeArea())
         .navigationTitle("Sessions")
         .toolbar(.hidden, for: .navigationBar)
+        .animation(.easeInOut(duration: 0.2), value: selecting)
         .task {
             if !loadedOnce { await reload() }
         }
@@ -109,164 +127,151 @@ struct SessionsView: View {
         } message: { _ in
             Text("Shown on every device. Leave it empty for the session's own title.")
         }
-        .alert("New section", isPresented: Binding(get: { newSectionFor != nil }, set: { if !$0 { newSectionFor = nil } }),
-               presenting: newSectionFor) { row in
+        .alert("New section", isPresented: Binding(get: { newSectionMove != nil }, set: { if !$0 { newSectionMove = nil } }),
+               presenting: newSectionMove) { move in
             TextField("Section name", text: $newSectionName)
             Button("Create") {
                 let name = String(newSectionName.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
                 guard !name.isEmpty else { return }
                 let sid = SessionsView.newSectionId()
-                ops([["op": "section.add", "section": sid, "name": name],
-                     ["op": "move", "id": row.wsId, "section": sid]])
+                var list: [[String: Any]] = [["op": "section.add", "section": sid, "name": name]]
+                list += move.map { ["op": "move", "id": $0, "section": sid] }
+                ops(list)
+                endSelection()
             }
             Button("Cancel", role: .cancel) {}
-        } message: { _ in
-            Text("The session moves into it.")
+        } message: { move in
+            Text(move.isEmpty ? "Shown on every device." : (move.count == 1 ? "The session moves into it." : "The \(move.count) sessions move into it."))
+        }
+        .alert("Rename section", isPresented: Binding(get: { renamingSection != nil }, set: { if !$0 { renamingSection = nil } }),
+               presenting: renamingSection) { sec in
+            TextField("Section name", text: $sectionNameText)
+            Button("Save") {
+                let name = String(sectionNameText.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
+                guard !name.isEmpty else { return }
+                ops([["op": "section.rename", "section": sec.id, "name": name]])
+            }
+            Button("Cancel", role: .cancel) {}
         }
         .confirmationDialog("Close this session?",
                             isPresented: Binding(get: { closing != nil }, set: { if !$0 { closing = nil } }),
                             titleVisibility: .visible, presenting: closing) { row in
             Button("Close \(title(row))", role: .destructive) {
                 if let sid = liveSessionId(row.item) {
-                    Task {
-                        if let err = await store.kill(sid) { banner = err }
-                    }
+                    act { await store.close(sid) }
                 }
             }
         } message: { _ in
-            Text("The process on your PC is stopped. You can continue the conversation later.")
+            Text("The agent is asked to stop, then its process on your PC ends. You can continue the conversation later.")
         }
+        .confirmationDialog(killTitle,
+                            isPresented: Binding(get: { killing != nil }, set: { if !$0 { killing = nil } }),
+                            titleVisibility: .visible, presenting: killing) { ids in
+            Button(ids.count == 1 ? "Kill" : "Kill \(ids.count) sessions", role: .destructive) {
+                Haptics.warning()
+                act { await store.killAll(ids) }
+                endSelection()
+            }
+        } message: { _ in
+            Text("The processes end at once, with everything they started. You can continue the conversations later.")
+        }
+    }
+
+    private var killTitle: String {
+        let n = killing?.count ?? 0
+        return n == 1 ? "Kill this session?" : "Kill \(n) sessions?"
     }
 
     // MARK: - Header
 
-    private func header(pinned: [SessionsRow]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Button {
-                    dismiss()
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Theme.text)
-                        .frame(width: 40, height: 40)
-                        .background(Theme.softWhite, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(Text("Back to the board"))
-                Text("Sessions")
-                    .font(.aigo(.title3))
-                    .foregroundStyle(Theme.text)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityAddTraits(.isHeader)
-                Button {
+    private var header: some View {
+        HStack(spacing: 2) {
+            QuietIconButton(symbol: "chevron.left", label: "Back to Home", tint: Theme.text2) {
+                dismiss()
+            }
+            Text(selecting ? (selected.isEmpty ? "Select sessions" : "\(selected.count) selected") : "Sessions")
+                .font(.aigo(.headline))
+                .foregroundStyle(Theme.text)
+                .lineLimit(1)
+                .contentTransition(.opacity)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityAddTraits(.isHeader)
+            if !selecting {
+                QuietIconButton(symbol: "magnifyingglass", label: "Search") {
                     store.showSearch = true
-                } label: {
-                    Label("Search", systemImage: "magnifyingglass")
-                        .font(.aigo(.footnote))
-                        .foregroundStyle(Theme.secondary)
-                        .padding(.horizontal, 10)
-                        .frame(minHeight: 40)
-                        .background(Theme.softWhite, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
                 }
-                .buttonStyle(.plain)
-            }
-            if !pinned.isEmpty {
-                groupHeader(id: "pinned", name: "PINNED", count: pinned.count)
-                if !isCollapsed("pinned") {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(pinned) { row in
-                                pinnedCard(row)
-                            }
-                        }
-                    }
+                QuietIconButton(symbol: "folder.badge.plus", label: "New section") {
+                    newSectionName = ""
+                    newSectionMove = []
                 }
             }
+            Button(selecting ? "Done" : "Select") {
+                Haptics.selection()
+                if selecting { endSelection() } else { selecting = true }
+            }
+            .font(.aigo(.callout, .medium))
+            .foregroundStyle(Theme.accentText)
+            .buttonStyle(QuietPressStyle())
+            .frame(minWidth: 56, minHeight: 40)
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 6)
-        .padding(.bottom, 8)
-    }
-
-    private func pinnedCard(_ row: SessionsRow) -> some View {
-        Button {
-            open(row)
-        } label: {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    dot(row.item)
-                    Text(title(row))
-                        .font(.aigo(.footnote))
-                        .foregroundStyle(Theme.text)
-                        .lineLimit(1)
-                    if opening == row.id {
-                        ProgressView().controlSize(.mini).tint(Theme.lime)
-                    }
-                }
-                Text(shortMeta(row.item))
-                    .font(.aigo(.caption2))
-                    .foregroundStyle(Theme.secondary)
-                    .lineLimit(1)
-            }
-            .padding(10)
-            .frame(width: 140, alignment: .leading)
-            .aigoCard(border: Color(aigoHex: 0x2A2D31), fill: Theme.surface)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .contextMenu { menu(row, pinned: true, section: nil) }
+        .padding(.horizontal, 8)
+        .padding(.top, 4)
+        .padding(.bottom, 4)
     }
 
     // MARK: - Groups
 
-    private func groupHeader(id: String, name: String, count: Int) -> some View {
-        Button {
+    private func groupHeader(_ group: SessionsGroup) -> some View {
+        let isOff = isCollapsed(group.id)
+        return Button {
             Haptics.selection()
-            toggle(id)
+            toggle(group.id)
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: isCollapsed(id) ? "chevron.right" : "chevron.down")
-                    .font(.system(size: 10, weight: .semibold))
-                    .frame(width: 12)
-                Text(name)
-                    .font(.aigo(.caption))
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: Theme.iconWeight))
+                    .rotationEffect(.degrees(isOff ? 0 : 90))
+                    .frame(width: 14)
+                if group.id == "pinned" {
+                    Image(systemName: "pin")
+                        .font(.system(size: 11, weight: Theme.iconWeight))
+                } else if group.sectionId == nil && group.id != "recent" {
+                    Image(systemName: "folder")
+                        .font(.system(size: 11, weight: Theme.iconWeight))
+                }
+                Text(group.name)
+                    .font(.aigo(.footnote, .medium))
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Text("\(count)")
-                    .font(.aigo(.caption))
+                if isOff && !group.rows.isEmpty {
+                    Text("\(group.rows.count)")
+                        .font(.aigo(.caption))
+                        .foregroundStyle(Theme.faint)
+                }
             }
-            .foregroundStyle(Theme.secondary)
-            .padding(.horizontal, 4)
-            .frame(minHeight: 32)
+            .foregroundStyle(Theme.muted)
+            .padding(.horizontal, 6)
+            .frame(minHeight: 34)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(Text("\(name), \(count) sessions, \(isCollapsed(id) ? "collapsed" : "expanded")"))
+        .accessibilityLabel(Text("\(group.name), \(group.rows.count) sessions, \(isOff ? "collapsed" : "expanded")"))
     }
 
     @ViewBuilder
     private func groupView(_ group: SessionsGroup) -> some View {
         let isRecent = group.id == "recent"
         let rows = isRecent ? Array(group.rows.prefix(recentShown)) : group.rows
-        VStack(alignment: .leading, spacing: 4) {
-            groupHeader(id: group.id, name: group.name, count: group.rows.count)
-                .contextMenu {
-                    if let sid = group.sectionId {
-                        Button(role: .destructive) {
-                            ops([["op": "section.remove", "section": sid]])
-                        } label: {
-                            Label("Remove section", systemImage: "folder.badge.minus")
-                        }
-                    }
-                }
+        VStack(alignment: .leading, spacing: 0) {
+            groupHeader(group)
+                .contextMenu { groupMenu(group) }
             if !isCollapsed(group.id) {
                 if group.rows.isEmpty && group.sectionId != nil {
                     Text("Empty. Long-press a session to move it here.")
-                        .font(.aigo(.caption2))
-                        .foregroundStyle(Theme.idle)
-                        .padding(.horizontal, 10)
+                        .font(.aigo(.caption))
+                        .foregroundStyle(Theme.faint)
+                        .padding(.horizontal, 26)
+                        .padding(.bottom, 6)
                 }
                 ForEach(rows) { row in
                     rowView(row, section: group.sectionId)
@@ -275,67 +280,174 @@ struct SessionsView: View {
                     Button("+\(group.rows.count - recentShown) more") {
                         recentShown += 50
                     }
-                    .buttonStyle(SecondaryButtonStyle())
+                    .font(.aigo(.footnote))
+                    .foregroundStyle(Theme.muted)
+                    .buttonStyle(.plain)
+                    .padding(.leading, 26)
+                    .frame(minHeight: 36)
                 }
+            }
+        }
+        .padding(.top, 8)
+    }
+
+    @ViewBuilder
+    private func groupMenu(_ group: SessionsGroup) -> some View {
+        let live = group.rows.compactMap { liveSessionId($0.item) }
+        if !group.rows.isEmpty {
+            Button {
+                selecting = true
+                selected.formUnion(group.rows.map { $0.wsId })
+            } label: {
+                Label("Select all here", systemImage: "checkmark.circle")
+            }
+        }
+        if !live.isEmpty {
+            Button {
+                act { await store.stopAll(live) }
+            } label: {
+                Label(group.sectionId != nil ? "Stop everything in this section" : "Stop everything here",
+                      systemImage: "stop")
+            }
+        }
+        if let sid = group.sectionId, let sec = store.workspace?.sections?.first(where: { $0.id == sid }) {
+            Button {
+                sectionNameText = sec.title
+                renamingSection = sec
+            } label: {
+                Label("Rename section…", systemImage: "pencil")
+            }
+            Button(role: .destructive) {
+                ops([["op": "section.remove", "section": sid]])
+            } label: {
+                Label("Remove section", systemImage: "folder.badge.minus")
+            }
+        }
+        Button {
+            newSectionName = ""
+            newSectionMove = []
+        } label: {
+            Label("New section…", systemImage: "folder.badge.plus")
+        }
+    }
+
+    // MARK: - Rows
+
+    private func rowView(_ row: SessionsRow, section: String?) -> some View {
+        let pinned = isPinned(row)
+        let children = childrenOf(row)
+        let isOpen = expanded.contains(row.id) && !children.isEmpty
+        let isSelected = selected.contains(row.id)
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                if selecting {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 18, weight: Theme.iconWeight))
+                        .foregroundStyle(isSelected ? Theme.accent : Theme.faint)
+                        .frame(width: 24)
+                        .accessibilityHidden(true)
+                }
+                Button {
+                    Haptics.selection()
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        if expanded.contains(row.id) { expanded.remove(row.id) } else { expanded.insert(row.id) }
+                    }
+                } label: {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: Theme.iconWeight))
+                        .foregroundStyle(Theme.faint)
+                        .rotationEffect(.degrees(isOpen ? 90 : 0))
+                        .frame(width: 22, height: 38)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .opacity(children.isEmpty ? 0 : 1)
+                .disabled(children.isEmpty)
+                .accessibilityLabel(Text(isOpen ? "Hide sub-agents and tasks" : "Show sub-agents and tasks"))
+                .accessibilityHidden(children.isEmpty)
+                dot(row.item)
+                Text(title(row))
+                    .font(.aigo(.callout))
+                    .foregroundStyle(Theme.text)
+                    .lineLimit(1)
+                    .layoutPriority(1)
+                Text(harness(row.item))
+                    .font(.aigo(.caption))
+                    .foregroundStyle(Theme.faint)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if opening == row.id {
+                    ProgressView().controlSize(.small).tint(Theme.muted)
+                } else if !isOpen && !children.isEmpty {
+                    let active = children.filter { $0.status == "working" || $0.status == "pending" }.count
+                    if active > 0 {
+                        Text("\(active)")
+                            .font(.aigo(.caption))
+                            .foregroundStyle(Theme.faint)
+                    }
+                }
+            }
+            .padding(.trailing, 8)
+            .frame(minHeight: 40)
+            .background(isSelected ? Theme.sel : Color.clear,
+                        in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if selecting {
+                    Haptics.selection()
+                    if isSelected { selected.remove(row.id) } else { selected.insert(row.id) }
+                } else {
+                    open(row)
+                }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+            .contextMenu { menu(row, pinned: pinned, section: section) }
+            if isOpen {
+                ForEach(children) { child in
+                    childRow(child, parent: row)
+                }
+                .transition(.opacity)
             }
         }
     }
 
-    private func rowView(_ row: SessionsRow, section: String?) -> some View {
-        let pinned = isPinned(row)
-        return HStack(spacing: 8) {
-            dot(row.item)
-            Button {
-                open(row)
-            } label: {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title(row))
-                        .font(.aigo(.callout))
-                        .foregroundStyle(Theme.text)
-                        .lineLimit(1)
-                    Text(meta(row.item))
-                        .font(.aigo(.caption2))
-                        .foregroundStyle(Theme.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .frame(minHeight: 50)
-                .contentShape(Rectangle())
+    private func childRow(_ child: SessionChild, parent: SessionsRow) -> some View {
+        Button {
+            if !selecting { open(parent) }
+        } label: {
+            HStack(spacing: 8) {
+                ChildGlyph(status: child.status)
+                Text(child.displayTitle)
+                    .font(.aigo(.footnote))
+                    .foregroundStyle(child.status == "done" ? Theme.muted : Theme.text2)
+                    .lineLimit(1)
+                Text(child.isSubagent ? "agent" : "task")
+                    .font(.aigo(.caption2))
+                    .foregroundStyle(Theme.faint)
+                Spacer(minLength: 4)
             }
-            .buttonStyle(.plain)
-            if opening == row.id {
-                ProgressView().controlSize(.small).tint(Theme.lime)
-            }
-            Button {
-                ops([["op": pinned ? "unpin" : "pin", "id": row.wsId]])
-            } label: {
-                Image(systemName: pinned ? "star.fill" : "star")
-                    .font(.system(size: 16))
-                    .foregroundStyle(pinned ? Theme.lime : Color(aigoHex: 0x4A4F55))
-                    .frame(width: 40, height: 40)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(Text(pinned ? "Unpin" : "Pin"))
+            .padding(.leading, selecting ? 72 : 44)
+            .padding(.trailing, 8)
+            .frame(minHeight: 30)
+            .contentShape(Rectangle())
         }
-        .padding(.leading, 10)
-        .padding(.trailing, 2)
-        .aigoCard(border: Color(aigoHex: 0x23262A), fill: Theme.surface)
-        .contextMenu { menu(row, pinned: pinned, section: section) }
+        .buttonStyle(QuietPressStyle())
+        .accessibilityLabel(Text("\(child.isSubagent ? "Sub-agent" : "Task"): \(child.displayTitle), \(child.status ?? "pending")"))
     }
 
     @ViewBuilder
     private func menu(_ row: SessionsRow, pinned: Bool, section: String?) -> some View {
+        let live = liveSessionId(row.item)
         Button {
             open(row)
         } label: {
-            Label("Open", systemImage: "arrow.up.forward.square")
+            Label("Open", systemImage: "arrow.up.right")
         }
         Button {
             ops([["op": pinned ? "unpin" : "pin", "id": row.wsId]])
         } label: {
-            Label(pinned ? "Unpin" : "Pin", systemImage: pinned ? "star.slash" : "star")
+            Label(pinned ? "Unpin" : "Pin", systemImage: pinned ? "pin.slash" : "pin")
         }
         Button {
             renameText = names[row.wsId] ?? names[row.item.workspaceKey] ?? ""
@@ -343,11 +455,52 @@ struct SessionsView: View {
         } label: {
             Label("Rename…", systemImage: "pencil")
         }
+        moveMenu(ids: [row.wsId], current: section ?? sectionOf(row))
+        if let sid = aigoSessionId(row.item), let s = store.session(id: sid), store.column(of: s) == .review {
+            Button {
+                act { await store.markSeen(sid) }
+            } label: {
+                Label("Mark reviewed", systemImage: "checkmark")
+            }
+        }
+        if let live {
+            Button {
+                act { await store.stop(live) }
+            } label: {
+                Label("Stop", systemImage: "stop")
+            }
+            Button(role: .destructive) {
+                closing = row
+            } label: {
+                Label("Close…", systemImage: "xmark.circle")
+            }
+            Button(role: .destructive) {
+                killing = [live]
+            } label: {
+                Label("Kill…", systemImage: "xmark.octagon")
+            }
+        }
+        Button {
+            selecting = true
+            selected.insert(row.wsId)
+        } label: {
+            Label("Select", systemImage: "checkmark.circle")
+        }
+        Button(role: .destructive) {
+            ops([["op": "hide", "id": row.wsId]])
+        } label: {
+            Label("Remove from list", systemImage: "eye.slash")
+        }
+    }
+
+    /// Move to section ▸ (the sections, New section…, out of the section).
+    @ViewBuilder
+    private func moveMenu(ids: [String], current: String?) -> some View {
         Menu {
-            let current = section ?? sectionOf(row)
             ForEach(store.workspace?.sections ?? []) { sec in
                 Button {
-                    ops([["op": "move", "id": row.wsId, "section": sec.id]])
+                    ops(ids.map { ["op": "move", "id": $0, "section": sec.id] })
+                    endSelection()
                 } label: {
                     if sec.id == current {
                         Label(sec.title, systemImage: "checkmark")
@@ -358,13 +511,14 @@ struct SessionsView: View {
             }
             Button {
                 newSectionName = ""
-                newSectionFor = row
+                newSectionMove = ids
             } label: {
                 Label("New section…", systemImage: "folder.badge.plus")
             }
-            if current != nil {
+            if current != nil || ids.count > 1 {
                 Button {
-                    ops([["op": "move", "id": row.wsId, "section": ""]])
+                    ops(ids.map { ["op": "move", "id": $0, "section": ""] })
+                    endSelection()
                 } label: {
                     Label("Out of the section", systemImage: "arrow.uturn.left")
                 }
@@ -372,30 +526,76 @@ struct SessionsView: View {
         } label: {
             Label("Move to section", systemImage: "folder")
         }
-        if liveSessionId(row.item) != nil {
-            Button(role: .destructive) {
-                closing = row
+    }
+
+    // MARK: - Select mode
+
+    private func selectionBar(_ byId: [String: SessionsRow]) -> some View {
+        let rows = selected.compactMap { byId[$0] }
+        let live = rows.compactMap { liveSessionId($0.item) }
+        let review = rows.compactMap { r -> String? in
+            guard let sid = aigoSessionId(r.item), let s = store.session(id: sid), store.column(of: s) == .review else { return nil }
+            return sid
+        }
+        return HStack(spacing: 6) {
+            Button {
+                act { await store.stopAll(live) }
+                endSelection()
             } label: {
-                Label("Close…", systemImage: "xmark.octagon")
+                Label("Stop", systemImage: "stop")
             }
+            .buttonStyle(ChipButtonStyle())
+            .disabled(live.isEmpty)
+            Button {
+                act { await store.markSeenAll(review) }
+                endSelection()
+            } label: {
+                Label("Reviewed", systemImage: "checkmark")
+            }
+            .buttonStyle(ChipButtonStyle())
+            .disabled(review.isEmpty)
+            moveMenu(ids: rows.map { $0.wsId }, current: nil)
+                .font(.aigo(.footnote, .medium))
+                .foregroundStyle(Theme.text2)
+                .padding(.horizontal, 12)
+                .frame(minHeight: 34)
+                .background(Theme.tint, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+                .disabled(rows.isEmpty)
+            Spacer(minLength: 0)
+            Button {
+                killing = live
+            } label: {
+                Label("Kill", systemImage: "xmark.octagon")
+            }
+            .buttonStyle(ChipButtonStyle(tint: Theme.danger))
+            .disabled(live.isEmpty)
         }
-        Button(role: .destructive) {
-            ops([["op": "hide", "id": row.wsId]])
-        } label: {
-            Label("Remove from list", systemImage: "eye.slash")
+        .labelStyle(.titleOnly)
+        .frame(maxWidth: 760)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity)
+        .background(Theme.panel.ignoresSafeArea(edges: .bottom))
+        .overlay(alignment: .top) {
+            Rectangle().fill(Theme.line).frame(height: 1)
         }
+    }
+
+    private func endSelection() {
+        selecting = false
+        selected = []
     }
 
     // MARK: - Pieces
 
     @ViewBuilder
     private func dot(_ item: SearchItem) -> some View {
-        if let sid = liveSessionId(item), let s = store.session(id: sid) {
-            StatusDot(status: s.status, size: 8)
+        if let sid = aigoSessionId(item), let s = store.session(id: sid), s.isRunning {
+            StatusDot(status: s.status, size: 7)
         } else if let col = BoardColumn(rawValue: item.board ?? ""), col != .done {
-            Circle().fill(col.color).frame(width: 8, height: 8)
+            Circle().fill(col.color).frame(width: 7, height: 7)
         } else {
-            Circle().strokeBorder(Theme.idle, lineWidth: 1.5).frame(width: 8, height: 8)
+            Circle().strokeBorder(Theme.faint, lineWidth: 1.2).frame(width: 7, height: 7)
         }
     }
 
@@ -414,22 +614,6 @@ struct SessionsView: View {
         item.harness.map { AgentNames.display($0) } ?? store.agentName(item.agent)
     }
 
-    private func shortMeta(_ item: SearchItem) -> String {
-        let age = Age.short(AigoDate.parse(item.lastActivity))
-        return age.isEmpty ? harness(item) : "\(harness(item)) · \(age)"
-    }
-
-    private func meta(_ item: SearchItem) -> String {
-        var parts = [harness(item)]
-        let place = (item.project ?? "").isEmpty ? folderName(item.cwd) : item.project!
-        if !place.isEmpty { parts.append(place) }
-        if store.hosts.count > 1 { parts.append(store.hostLabel) }
-        if let live = store.liveLabel(item.live), item.live?.`where` == "outside" { parts.append(live) }
-        let age = Age.short(AigoDate.parse(item.lastActivity))
-        if !age.isEmpty { parts.append(age) }
-        return parts.joined(separator: " · ")
-    }
-
     /// The running Aigo session behind a row, if any.
     private func liveSessionId(_ item: SearchItem) -> String? {
         if (item.kind ?? "session") == "session", let s = store.session(id: item.id), s.isRunning { return s.id }
@@ -438,6 +622,19 @@ struct SessionsView: View {
             return sid
         }
         return nil
+    }
+
+    /// The Aigo session behind a row (running or not), if the app knows it.
+    private func aigoSessionId(_ item: SearchItem) -> String? {
+        if (item.kind ?? "session") == "session", store.session(id: item.id) != nil { return item.id }
+        if let sid = item.live?.sessionId, !sid.isEmpty, store.session(id: sid) != nil { return sid }
+        return nil
+    }
+
+    /// Sub-agents and tasks of the row's Aigo session (host API §2 `children`).
+    private func childrenOf(_ row: SessionsRow) -> [SessionChild] {
+        guard let sid = aigoSessionId(row.item) else { return [] }
+        return store.session(id: sid)?.children ?? []
     }
 
     private func isPinned(_ row: SessionsRow) -> Bool {
@@ -472,6 +669,15 @@ struct SessionsView: View {
     }
 
     // MARK: - Grouping
+
+    static func index(_ built: (pinned: [SessionsRow], groups: [SessionsGroup])) -> [String: SessionsRow] {
+        var out: [String: SessionsRow] = [:]
+        for r in built.pinned { out[r.wsId] = r }
+        for g in built.groups {
+            for r in g.rows where out[r.wsId] == nil { out[r.wsId] = r }
+        }
+        return out
+    }
 
     private func build() -> (pinned: [SessionsRow], groups: [SessionsGroup]) {
         let doc = store.workspace ?? WorkspaceDoc()
@@ -583,8 +789,18 @@ struct SessionsView: View {
     // MARK: - Actions
 
     private func ops(_ list: [[String: Any]]) {
+        guard !list.isEmpty else { return }
         Task {
             if let err = await store.workspaceOps(list) {
+                Haptics.error()
+                withAnimation { banner = err }
+            }
+        }
+    }
+
+    private func act(_ op: @escaping () async -> String?) {
+        Task {
+            if let err = await op() {
                 Haptics.error()
                 withAnimation { banner = err }
             }

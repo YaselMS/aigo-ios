@@ -462,6 +462,11 @@ final class APIClient: @unchecked Sendable {
         try await call("POST", "/api/v1/sessions/\(id)/kill")
     }
 
+    /// Ends the session gracefully: interrupt, Ctrl+C, then kill (chat: stops the harness).
+    func stopSession(_ id: String) async throws {
+        try await call("POST", "/api/v1/sessions/\(id)/stop")
+    }
+
     func restart(_ id: String) async throws -> SessionInfo {
         try await send("POST", "/api/v1/sessions/\(id)/restart", body: nil, as: SessionInfo.self)
     }

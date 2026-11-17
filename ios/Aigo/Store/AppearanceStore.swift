@@ -1,18 +1,33 @@
 import SwiftUI
 import UIKit
 
-/// Settings → Appearance: the UI font and the text size. Changing either
-/// updates `AigoAppearance.current` (read by `Font.aigo`) and bumps
+/// Settings → Appearance: the theme (Slate, Porcelain, Dusk), the code font
+/// and the text size. Changing one updates `AigoThemeID.current` /
+/// `AigoAppearance.current` (read by `Theme` and `Font.aigo`) and bumps
 /// `revision`, which rebuilds the view tree so every screen picks it up.
 @MainActor
 final class AppearanceStore: ObservableObject {
     @Published private(set) var appearance: AigoAppearance
+    @Published private(set) var theme: AigoThemeID
     @Published private(set) var revision = 0
 
     init() {
         appearance = AigoAppearance.load()
+        theme = AigoThemeID.load()
         AigoAppearance.current = appearance
+        AigoThemeID.current = theme
         AppearanceStore.applyUIKit(appearance)
+    }
+
+    var colorScheme: ColorScheme { theme.colorScheme }
+
+    func setTheme(_ t: AigoThemeID) {
+        guard t != theme else { return }
+        theme = t
+        AigoThemeID.current = t
+        UserDefaults.standard.set(t.rawValue, forKey: AigoThemeID.key)
+        AppearanceStore.applyUIKit(appearance)
+        revision += 1
     }
 
     var family: AigoFontFamily {
@@ -39,15 +54,21 @@ final class AppearanceStore: ObservableObject {
     static func applyUIKit(_ a: AigoAppearance) {
         let scale = a.size.scale
         func ui(_ size: CGFloat, _ weight: Font.Weight) -> UIFont {
-            UIFont(name: a.family.postScriptName(weight), size: size * scale)
-                ?? .monospacedSystemFont(ofSize: size * scale, weight: weight == .regular ? .regular : .semibold)
+            let w: UIFont.Weight
+            switch weight {
+            case .bold, .heavy, .black: w = .bold
+            case .semibold: w = .semibold
+            case .medium: w = .medium
+            default: w = .regular
+            }
+            return .systemFont(ofSize: size * scale, weight: w)
         }
         let nav = UINavigationBarAppearance()
         nav.configureWithOpaqueBackground()
-        nav.backgroundColor = UIColor(AigoPalette.background)
+        nav.backgroundColor = UIColor(AigoPalette.bg)
         nav.shadowColor = UIColor(AigoPalette.line)
         nav.titleTextAttributes = [.font: ui(15, .semibold), .foregroundColor: UIColor(AigoPalette.text)]
-        nav.largeTitleTextAttributes = [.font: ui(26, .bold), .foregroundColor: UIColor(AigoPalette.text)]
+        nav.largeTitleTextAttributes = [.font: ui(26, .semibold), .foregroundColor: UIColor(AigoPalette.text)]
         let button = UIBarButtonItemAppearance()
         button.normal.titleTextAttributes = [.font: ui(14, .regular)]
         nav.buttonAppearance = button
@@ -56,7 +77,10 @@ final class AppearanceStore: ObservableObject {
         UINavigationBar.appearance().scrollEdgeAppearance = nav
         UINavigationBar.appearance().compactAppearance = nav
         UISegmentedControl.appearance().setTitleTextAttributes([.font: ui(13, .regular)], for: .normal)
-        UISegmentedControl.appearance().setTitleTextAttributes([.font: ui(13, .semibold)], for: .selected)
+        UISegmentedControl.appearance().setTitleTextAttributes([.font: ui(13, .medium)], for: .selected)
+        UISegmentedControl.appearance().selectedSegmentTintColor = UIColor(AigoPalette.raised)
+        // Forms and lists keep the theme's background between rows.
+        UITableView.appearance().backgroundColor = UIColor(AigoPalette.bg)
     }
 }
 

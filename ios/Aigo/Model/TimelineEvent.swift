@@ -25,11 +25,11 @@ struct TimelineEvent: Identifiable, Equatable {
 
     var color: Color {
         switch kind {
-        case .needsYou, .problem: return AigoPalette.coral
-        case .working, .approved, .answered: return AigoPalette.lime
-        case .done: return AigoPalette.ice
-        case .denied, .notice: return AigoPalette.secondary
-        case .exited: return AigoPalette.idle
+        case .needsYou, .problem: return AigoPalette.ask
+        case .working, .approved, .answered: return AigoPalette.work
+        case .done: return AigoPalette.review
+        case .denied, .notice: return AigoPalette.muted
+        case .exited: return AigoPalette.faint
         }
     }
 }

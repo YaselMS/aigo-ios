@@ -24,15 +24,15 @@ enum SessionStatus: Int, Comparable {
         }
     }
 
-    /// nil = draw a grey outline dot (idle).
+    /// nil = draw a faint outline dot (idle).
     var color: Color? {
         switch self {
-        case .needsYou: return AigoPalette.coral
-        case .working: return AigoPalette.lime
-        case .stalled: return AigoPalette.lime.opacity(0.45)
-        case .done: return AigoPalette.ice
+        case .needsYou: return AigoPalette.ask
+        case .working: return AigoPalette.work
+        case .stalled: return AigoPalette.work.opacity(0.45)
+        case .done: return AigoPalette.review
         case .idle: return nil
-        case .exited: return AigoPalette.secondary.opacity(0.35)
+        case .exited: return AigoPalette.muted.opacity(0.35)
         }
     }
 }
@@ -150,17 +150,17 @@ enum BoardColumn: String, CaseIterable, Identifiable {
         switch self {
         case .ask: return "Needs you"
         case .work: return "Working"
-        case .review: return "Review"
-        case .done: return "Done"
+        case .review: return "To review"
+        case .done: return "Done today"
         }
     }
 
     var color: Color {
         switch self {
-        case .ask: return AigoPalette.coral
-        case .work: return AigoPalette.lime
-        case .review: return AigoPalette.ice
-        case .done: return AigoPalette.idle
+        case .ask: return AigoPalette.ask
+        case .work: return AigoPalette.work
+        case .review: return AigoPalette.review
+        case .done: return AigoPalette.done
         }
     }
 

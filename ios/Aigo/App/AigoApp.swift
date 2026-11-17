@@ -18,8 +18,8 @@ struct AigoApp: App {
                 .environmentObject(store)
                 .environmentObject(appearance)
                 .environmentObject(updates)
-                .preferredColorScheme(.dark)
-                .tint(Theme.lime)
+                .preferredColorScheme(appearance.colorScheme)
+                .tint(Theme.accent)
                 .onOpenURL { url in
                     store.handleURL(url)
                 }

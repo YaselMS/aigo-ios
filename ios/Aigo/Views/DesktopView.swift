@@ -86,10 +86,10 @@ struct DesktopView: View {
 
     private var waiting: some View {
         VStack(spacing: 12) {
-            ProgressView().tint(Theme.secondary)
+            ProgressView().tint(Theme.muted)
             Text(waitingText)
                 .font(.aigo(.callout))
-                .foregroundStyle(Theme.secondary)
+                .foregroundStyle(Theme.muted)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             if case .connecting(let problem) = model.phase, problem != nil {
@@ -127,18 +127,17 @@ struct DesktopView: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
                     Image(systemName: "display.trianglebadge.exclamationmark")
-                        .foregroundStyle(Theme.coral)
-                    Text("REMOTE DESKTOP")
-                        .font(Theme.monoLabel)
-                        .tracking(1.0)
-                        .foregroundStyle(Theme.coral)
+                        .foregroundStyle(Theme.ask)
+                    Text("Remote desktop")
+                        .font(Theme.label)
+                        .foregroundStyle(Theme.ask)
                 }
                 Text(title)
                     .font(.aigo(.title3, .semibold))
                     .foregroundStyle(Theme.text)
                 Text(message)
                     .font(.aigo(.callout))
-                    .foregroundStyle(Theme.secondary)
+                    .foregroundStyle(Theme.muted)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 10) {
                     Button {
@@ -149,7 +148,7 @@ struct DesktopView: View {
                     }
                     .buttonStyle(SecondaryButtonStyle())
                     Button("Close") { dismiss() }
-                        .buttonStyle(SoftButtonStyle(tint: Theme.lime))
+                        .buttonStyle(SoftButtonStyle(tint: Theme.accent))
                 }
                 .padding(.top, 6)
             }
@@ -200,7 +199,7 @@ struct DesktopView: View {
             } else if chrome && model.phase == .live && model.hasFrame {
                 Text("View only · pinch to zoom · drag to move · tap to hide controls")
                     .font(.aigo(.caption))
-                    .foregroundStyle(Theme.secondary)
+                    .foregroundStyle(Theme.muted)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
                     .background(Color.black.opacity(0.55), in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
@@ -219,7 +218,7 @@ struct DesktopView: View {
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(Theme.text)
                 .frame(width: 36, height: 36)
-                .background(Theme.softWhite, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+                .background(Theme.tint, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
                 .frame(width: 44, height: 44)
                 .contentShape(Rectangle())
         }
@@ -237,11 +236,11 @@ struct DesktopView: View {
                     .lineLimit(1)
                 HStack(spacing: 5) {
                     Circle()
-                        .fill(model.phase == .live ? Theme.lime : Theme.secondary)
+                        .fill(model.phase == .live ? Theme.add : Theme.muted)
                         .frame(width: 6, height: 6)
                     Text(statsText)
                         .font(.aigo(size: 11))
-                        .foregroundStyle(Theme.secondary)
+                        .foregroundStyle(Theme.muted)
                         .lineLimit(1)
                         .monospacedDigit()
                 }
@@ -252,10 +251,10 @@ struct DesktopView: View {
             if !model.controlAllowed {
                 Label("View only", systemImage: "eye")
                     .font(.aigo(.caption, .semibold))
-                    .foregroundStyle(Theme.secondary)
+                    .foregroundStyle(Theme.muted)
                     .padding(.horizontal, 10)
                     .frame(minHeight: 36)
-                    .background(Theme.softWhite, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+                    .background(Theme.tint, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
                     .accessibilityLabel(Text("View only. \(model.controlReason ?? "")"))
             } else {
                 Button {
@@ -268,8 +267,8 @@ struct DesktopView: View {
                 } label: {
                     Text(model.control ? "Release" : "Take control")
                 }
-                .buttonStyle(SoftButtonStyle(tint: model.control ? Theme.coral : Theme.lime,
-                                             text: model.control ? Theme.coralButtonText : nil,
+                .buttonStyle(SoftButtonStyle(tint: model.control ? Theme.ask : Theme.accent,
+                                             text: model.control ? Theme.ask : nil,
                                              fullWidth: false, minHeight: 36))
                 .disabled(model.phase != .live && !model.control)
             }
@@ -304,7 +303,7 @@ struct DesktopView: View {
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(Theme.text)
                 .frame(width: 36, height: 36)
-                .background(Theme.softWhite, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+                .background(Theme.tint, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
                 .frame(width: 40, height: 44)
                 .contentShape(Rectangle())
         }
@@ -337,7 +336,7 @@ struct DesktopView: View {
             }
             Text(hint)
                 .font(.aigo(size: 10.5))
-                .foregroundStyle(Theme.secondary)
+                .foregroundStyle(Theme.muted)
                 .lineLimit(2)
                 .multilineTextAlignment(.center)
         }
@@ -365,9 +364,9 @@ struct DesktopView: View {
                     .font(.aigo(size: 10.5, on ? .bold : .regular))
                     .lineLimit(1)
             }
-            .foregroundStyle(on ? Theme.lime : Theme.text)
+            .foregroundStyle(on ? Theme.accent : Theme.text)
             .frame(maxWidth: .infinity, minHeight: 44)
-            .background(on ? Theme.lime.opacity(0.15) : Theme.softWhite,
+            .background(on ? Theme.accent.opacity(0.15) : Theme.tint,
                         in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
             .contentShape(Rectangle())
         }
@@ -399,10 +398,10 @@ struct DesktopView: View {
         Button(action: action) {
             Text(label)
                 .font(.aigo(.footnote, .semibold))
-                .foregroundStyle(on ? Theme.bg : Theme.text)
+                .foregroundStyle(on ? Theme.accentInk : Theme.text)
                 .padding(.horizontal, 12)
                 .frame(minWidth: 40, minHeight: 38)
-                .background(on ? Theme.lime : Theme.softWhite,
+                .background(on ? Theme.accentBg : Theme.tint,
                             in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
                 .contentShape(Rectangle())
         }
@@ -467,7 +466,7 @@ private struct DesktopSettingsSheet: View {
                 }
             }
         }
-        .tint(Theme.lime)
+        .tint(Theme.accent)
     }
 
     private var primaryLabel: String {
@@ -491,11 +490,10 @@ private struct TakeControlSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
                 Image(systemName: "cursorarrow.click.2")
-                    .foregroundStyle(Theme.coral)
-                Text("TAKE CONTROL")
-                    .font(Theme.monoLabel)
-                    .tracking(1.0)
-                    .foregroundStyle(Theme.coral)
+                    .foregroundStyle(Theme.ask)
+                Text("Take control")
+                    .font(Theme.label)
+                    .foregroundStyle(Theme.ask)
             }
             Text("Control \(hostLabel) from this iPhone?")
                 .font(.aigo(.title3, .semibold))
@@ -503,14 +501,14 @@ private struct TakeControlSheet: View {
                 .fixedSize(horizontal: false, vertical: true)
             Text("Taps, drags, scrolling and keys act on the real PC as if you were sitting at it, including closing windows and deleting files. Anyone at the PC sees the pointer move. Tap Release to go back to view only.")
                 .font(.aigo(.callout))
-                .foregroundStyle(Theme.secondary)
+                .foregroundStyle(Theme.muted)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
             HStack(spacing: 10) {
                 Button("Cancel", action: onCancel)
                     .buttonStyle(SecondaryButtonStyle())
                 Button("Take control", action: onConfirm)
-                    .buttonStyle(SoftButtonStyle(tint: Theme.coral, text: Theme.coralButtonText))
+                    .buttonStyle(SoftButtonStyle(tint: Theme.ask, text: Theme.ask))
             }
         }
         .padding(20)
