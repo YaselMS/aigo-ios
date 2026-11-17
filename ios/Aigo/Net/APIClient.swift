@@ -12,7 +12,18 @@ struct APIError: LocalizedError {
 
     var errorDescription: String? { message }
 
-    static func from(status: Int, data: Data) -> APIError {
+    static func from(status: Int, data: Data, pairing: Bool = false) -> APIError {
+        if pairing {
+            switch status {
+            case 401:
+                return APIError(status: status, message: "That pairing code is incorrect. Use the code currently shown on the PC.")
+            case 409:
+                return APIError(status: status, message: "Pairing expired or was stopped. Open a new pairing code on the PC and scan it again.")
+            case 429:
+                return APIError(status: status, message: "Too many pairing attempts. Wait a minute, then use a new code from the PC.")
+            default: break
+            }
+        }
         if status == 401 {
             return APIError(status: status, message: ConnectionProblem.removed.message, needsRepair: true)
         }
@@ -197,7 +208,7 @@ final class APIClient: @unchecked Sendable {
         }
         let status = (result.1 as? HTTPURLResponse)?.statusCode ?? 0
         if status < 200 || status >= 300 {
-            throw APIError.from(status: status, data: result.0)
+            throw APIError.from(status: status, data: result.0, pairing: path == "/api/v1/pairing/complete")
         }
         return result.0
     }

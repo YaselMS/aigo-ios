@@ -184,6 +184,17 @@ jobs:
             -clonedSourcePackagesDirPath "$SPM_DIR" \
             -skipPackagePluginValidation
 
+      - name: Pairing recovery regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          device=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for k,v in d["devices"].items() if "iOS" in k for x in v if "iPhone" in x["name"]))')
+          xcodebuild test -project ios/Aigo.xcodeproj -scheme Aigo \
+            -destination "platform=iOS Simulator,id=$device" \
+            -clonedSourcePackagesDirPath "$SPM_DIR" \
+            -skipPackagePluginValidation -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/pairing-tests.log" | xcbeautify --renderer github-actions
+
       - name: Archive (no code signing)
         shell: bash
         env:

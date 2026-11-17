@@ -10,7 +10,7 @@ settings:
   base:
     SWIFT_VERSION: "5.0"
     SWIFT_STRICT_CONCURRENCY: minimal
-    MARKETING_VERSION: "0.4.0"
+    MARKETING_VERSION: "0.4.1"
     CURRENT_PROJECT_VERSION: "1"
     IPHONEOS_DEPLOYMENT_TARGET: "17.0"
     TARGETED_DEVICE_FAMILY: "1,2"
@@ -143,6 +143,17 @@ targets:
           - VictorMono-Regular.ttf
           - VictorMono-SemiBold.ttf
 
+  AigoTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: AigoTests
+    dependencies:
+      - target: Aigo
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+
 schemes:
   Aigo:
     build:
@@ -151,5 +162,8 @@ schemes:
         AigoWidgets: all
     run:
       config: Debug
+    test:
+      targets:
+        - AigoTests
     archive:
       config: Release

@@ -1031,12 +1031,20 @@ final class AppStore: ObservableObject {
         if creds.hostName.isEmpty || creds.hostName == "PC", !draft.hostName.isEmpty {
             creds.hostName = draft.hostName
         }
-        hosts.removeAll { $0.id == creds.id || $0.addr == creds.addr }
-        hosts.append(creds)
-        HostVault.save(hosts)
+        installPairing(creds)
         pairDraft = nil
         showPairSheet = false
         Haptics.success()
+    }
+
+    /// A successful pairing replaces the credentials even for the selected PC.
+    /// Retrying its existing socket would keep sending the revoked token.
+    func installPairing(_ creds: HostCredentials) {
+        disconnect()
+        lastFailover = nil
+        hosts.removeAll { $0.id == creds.id || $0.addr == creds.addr || $0.fingerprint == creds.fingerprint }
+        hosts.append(creds)
+        HostVault.save(hosts)
         activate(creds.id)
     }
 

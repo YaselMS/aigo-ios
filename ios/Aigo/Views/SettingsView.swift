@@ -53,7 +53,7 @@ struct SettingsView: View {
             } header: {
                 Text("Paired PCs")
             } footer: {
-                Text("Tap a PC to switch to it. Swipe left to forget it. To fully revoke this phone, remove it on the PC under Settings → Devices.")
+                Text("Wi-Fi and Tailscale use the same pairing; no need to revoke this phone to switch networks. Tap a PC to switch to it. Swipe left to forget it.")
             }
             .listRowBackground(Theme.surface)
 
@@ -66,12 +66,14 @@ struct SettingsView: View {
                     }
                 }
                 if store.connectionProblem != nil {
+                    if store.connectionProblem?.needsRepair != true {
                     Button {
                         Haptics.tap()
                         store.retry()
                     } label: {
                         Label("Retry now", systemImage: "arrow.clockwise")
                             .frame(minHeight: 44)
+                    }
                     }
                     if store.connectionProblem?.needsRepair == true {
                         Button {

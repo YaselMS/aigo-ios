@@ -83,7 +83,9 @@ struct PairView: View {
         .onAppear {
             if let d = draft {
                 apply(d)
-                if !d.isComplete {
+                if d.isComplete {
+                    pair()
+                } else {
                     showManual = true
                 }
             }
@@ -91,6 +93,7 @@ struct PairView: View {
         .onChange(of: draft) { _, newValue in
             if let d = newValue {
                 apply(d)
+                if d.isComplete { pair() } else { showManual = true }
             }
         }
     }
