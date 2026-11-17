@@ -1,27 +1,28 @@
 import SwiftUI
 import UIKit
 
-/// Home = the board as four tabs with counts: Needs you / Working / Review /
-/// Done. Needs-you cards are answered inline; Review cards have "Looks good";
-/// every card opens its conversation. "New work" sits at the bottom.
+/// Home (round 3): a slim top row (wordmark, PC switcher, quiet icons), the
+/// board as calm sections (Needs you with one-tap answers, Working, To
+/// review, Done today; empty sections hidden, no zero counts), recent
+/// sessions to continue, and New chat / Continue at the bottom.
 struct HomeView: View {
     @EnvironmentObject private var store: AppStore
     @EnvironmentObject private var updates: UpdateChecker
-    @State private var tab: BoardColumn = .ask
-    @State private var pickedInitialTab = false
     @State private var killing: SessionInfo?
     @State private var removing: SessionInfo?
     @State private var banner: String?
-    /// Version label next to the wordmark (#67); tap the wordmark to toggle it.
+    @State private var showAllDone = false
+    /// Version label next to the wordmark (#67); tap to hide, Settings → Show version brings it back.
     @AppStorage("showVersionLabel") private var showVersion = true
+
+    private static let doneShown = 4
 
     var body: some View {
         let board = store.board
-        let cards = board[tab] ?? []
         VStack(spacing: 0) {
-            header(board)
+            header
             ScrollView {
-                LazyVStack(spacing: 10) {
+                LazyVStack(alignment: .leading, spacing: 10) {
                     if let problem = store.connectionProblem {
                         ConnectionProblemCard(problem: problem)
                             .transition(.opacity)
@@ -37,36 +38,27 @@ struct HomeView: View {
                     }
                     if !store.hasSnapshot && store.connectionProblem == nil {
                         SkeletonRows(count: 3)
-                    } else if store.sessions.isEmpty && store.pendingItems.isEmpty && tab != .done {
-                        emptyState
-                    } else if cards.isEmpty {
-                        Text(tab.emptyText)
-                            .font(.aigo(.callout))
-                            .foregroundStyle(Theme.secondary)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 40)
-                    } else {
-                        ForEach(cards) { card in
-                            cardView(card)
-                                .transition(.opacity.combined(with: .move(edge: .top)))
-                        }
+                    } else if store.hasSnapshot {
+                        summary(board)
+                        boardSections(board)
+                        continueSection
                     }
                 }
+                .frame(maxWidth: 760)
+                .frame(maxWidth: .infinity)
                 .padding(.horizontal, Theme.gutter)
-                .padding(.top, 8)
+                .padding(.top, 4)
                 .padding(.bottom, 16)
-                .animation(.easeInOut(duration: 0.25), value: cards.map { $0.id })
+                .animation(.easeInOut(duration: 0.25), value: BoardColumn.allCases.map { (board[$0] ?? []).map(\.id) })
             }
             .refreshable {
                 await store.refresh()
             }
-            newWorkButton
+            bottomBar
         }
         .background(Theme.bg.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
-        .navigationTitle("Board")
-        .onAppear { pickInitialTab(board) }
-        .onChange(of: store.hasSnapshot) { _, _ in pickInitialTab(store.board) }
+        .navigationTitle("Home")
         .confirmationDialog("Kill this session?",
                             isPresented: Binding(get: { killing != nil }, set: { if !$0 { killing = nil } }),
                             titleVisibility: .visible,
@@ -75,7 +67,7 @@ struct HomeView: View {
                 act { await store.kill(s.id) }
             }
         } message: { _ in
-            Text("The process on your PC is stopped. You can restart or resume it later.")
+            Text("The process on your PC is ended. You can restart or resume it later.")
         }
         .confirmationDialog("Remove this session?",
                             isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
@@ -89,154 +81,190 @@ struct HomeView: View {
         }
     }
 
-    /// Opens on Needs you when something waits, else on the busiest column.
-    private func pickInitialTab(_ board: [BoardColumn: [BoardCard]]) {
-        guard !pickedInitialTab, store.hasSnapshot else { return }
-        pickedInitialTab = true
-        tab = BoardColumn.allCases.first { !(board[$0] ?? []).isEmpty } ?? .ask
-    }
-
     // MARK: - Header
 
-    private func header(_ board: [BoardColumn: [BoardCard]]) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Button {
-                    Haptics.selection()
-                    withAnimation(.easeInOut(duration: 0.15)) { showVersion.toggle() }
-                } label: {
-                    HStack(alignment: .lastTextBaseline, spacing: 6) {
-                        AigoWordmark(size: 17)
-                        if showVersion {
-                            Text("v\(UpdateChecker.currentVersion)")
-                                .font(.aigo(size: 11))
-                                .foregroundStyle(Theme.secondary)
-                                .fixedSize()
-                                .transition(.opacity)
-                        }
-                    }
-                    .frame(minHeight: 40)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(Text("Aigo version \(UpdateChecker.currentVersion)"))
-                .accessibilityHint(Text(showVersion ? "Hides the version" : "Shows the version"))
-                Spacer(minLength: 8)
-                HostSwitcher()
-                    .layoutPriority(1)
-                if store.hasWorkspace {
-                    iconButton("list.bullet", label: "Sessions") {
-                        store.path.append(.sessions)
+    private var header: some View {
+        HStack(spacing: 4) {
+            Button {
+                Haptics.selection()
+                withAnimation(.easeInOut(duration: 0.15)) { showVersion.toggle() }
+            } label: {
+                HStack(alignment: .lastTextBaseline, spacing: 6) {
+                    AigoWordmark(size: 17)
+                    if showVersion {
+                        Text("v\(UpdateChecker.currentVersion)")
+                            .font(.aigo(size: 11))
+                            .foregroundStyle(Theme.faint)
+                            .fixedSize()
+                            .transition(.opacity)
                     }
                 }
-                iconButton("magnifyingglass", label: "Search") {
-                    store.showSearch = true
-                }
-                iconButton("gearshape", label: "Settings") {
-                    store.path.append(.settings)
+                .frame(minHeight: 40)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Text("Aigo version \(UpdateChecker.currentVersion)"))
+            .accessibilityHint(Text(showVersion ? "Hides the version" : "Shows the version"))
+            .padding(.trailing, 6)
+            HostSwitcher()
+                .layoutPriority(1)
+            Spacer(minLength: 4)
+            QuietIconButton(symbol: "magnifyingglass", label: "Search") {
+                store.showSearch = true
+            }
+            if store.hasWorkspace {
+                QuietIconButton(symbol: "sidebar.left", label: "Sessions") {
+                    store.path.append(.sessions)
                 }
             }
-            Text(headline(board))
-                .font(.aigo(.title, .semibold))
-                .foregroundStyle(Theme.text)
-                .lineLimit(2)
-                .minimumScaleFactor(0.8)
-                .contentTransition(.opacity)
-                .accessibilityAddTraits(.isHeader)
-            tabs(board)
+            QuietIconButton(symbol: "gearshape", label: "Settings") {
+                store.path.append(.settings)
+            }
         }
-        .padding(.horizontal, 18)
-        .padding(.top, 6)
-        .padding(.bottom, 8)
+        .padding(.leading, 18)
+        .padding(.trailing, 8)
+        .padding(.top, 4)
+        .padding(.bottom, 6)
         .background(Theme.bg)
     }
 
-    private func headline(_ board: [BoardColumn: [BoardCard]]) -> String {
-        if store.activeHost == nil { return "Pair your PC to get started." }
-        if !store.hasSnapshot {
-            return store.connectionProblem != nil ? "Can't reach \(store.hostLabel)" : "Connecting to \(store.hostLabel)…"
-        }
+    // MARK: - Board
+
+    /// One quiet line: only the non-zero parts ("2 need you · 3 working").
+    @ViewBuilder
+    private func summary(_ board: [BoardColumn: [BoardCard]]) -> some View {
         let ask = board[.ask]?.count ?? 0
         let work = board[.work]?.count ?? 0
-        return (ask > 0 ? "\(ask) need you" : "All clear") + " · \(work) working"
-    }
-
-    private func iconButton(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(Theme.text)
-                .frame(width: 36, height: 36)
-                .background(Theme.softWhite, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
-                .frame(width: 40, height: 44)
-                .contentShape(Rectangle())
+        let review = board[.review]?.count ?? 0
+        let parts = [ask > 0 ? "\(ask) need\(ask == 1 ? "s" : "") you" : nil,
+                     work > 0 ? "\(work) working" : nil,
+                     review > 0 ? "\(review) to review" : nil].compactMap { $0 }
+        Text(parts.isEmpty ? "All quiet on \(store.hostLabel)." : parts.joined(separator: " · "))
+            .font(.aigo(.title3, .semibold))
+            .foregroundStyle(Theme.text)
+            .lineLimit(2)
+            .contentTransition(.opacity)
+            .padding(.top, 6)
+            .padding(.bottom, 2)
+            .accessibilityAddTraits(.isHeader)
+        if parts.isEmpty && store.sessions.isEmpty {
+            Text("Start a chat with an agent in one of your projects. What it needs from you shows up here.")
+                .font(.aigo(.footnote))
+                .foregroundStyle(Theme.muted)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(Text(label))
     }
 
-    private func tabs(_ board: [BoardColumn: [BoardCard]]) -> some View {
-        HStack(spacing: 6) {
-            ForEach(BoardColumn.allCases) { col in
-                let count = board[col]?.count ?? 0
-                let on = col == tab
-                let alert = col == .ask && count > 0
-                Button {
-                    Haptics.selection()
-                    withAnimation(.easeInOut(duration: 0.15)) { tab = col }
-                } label: {
-                    VStack(spacing: 2) {
-                        Text("\(count)")
-                            .font(.aigo(size: 15, .semibold))
-                            .foregroundStyle(alert ? Theme.coral : (on ? Theme.bg : Theme.text))
-                            .contentTransition(.numericText())
-                        Text(col.label)
-                            .font(.aigo(size: 11))
-                            .foregroundStyle(on ? Theme.bg : Theme.secondary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.75)
+    @ViewBuilder
+    private func boardSections(_ board: [BoardColumn: [BoardCard]]) -> some View {
+        ForEach(BoardColumn.allCases) { col in
+            let cards = board[col] ?? []
+            if !cards.isEmpty {
+                sectionHeader(col.label, count: cards.count, color: col.color)
+                if col == .done {
+                    let shown = showAllDone ? cards : Array(cards.prefix(HomeView.doneShown))
+                    VStack(spacing: 0) {
+                        ForEach(shown) { card in
+                            doneRow(card)
+                        }
                     }
-                    .frame(maxWidth: .infinity, minHeight: 50)
-                    .background(on ? Theme.text : Theme.surface,
-                                in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
-                        .strokeBorder(on ? Color.clear : (alert ? Color(aigoHex: 0x5A3A30) : Theme.line), lineWidth: 1))
-                    .contentShape(Rectangle())
+                    .aigoCard()
+                    if cards.count > HomeView.doneShown {
+                        Button(showAllDone ? "Show less" : "Show all \(cards.count)") {
+                            withAnimation(.easeInOut(duration: 0.2)) { showAllDone.toggle() }
+                        }
+                        .font(.aigo(.footnote))
+                        .foregroundStyle(Theme.muted)
+                        .buttonStyle(.plain)
+                        .frame(minHeight: 32)
+                    }
+                } else {
+                    ForEach(cards) { card in
+                        cardView(card)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(Text("\(col.label), \(count)"))
-                .accessibilityAddTraits(on ? [.isSelected, .isButton] : .isButton)
             }
         }
     }
 
-    // MARK: - Cards
+    private func sectionHeader(_ title: String, count: Int, color: Color) -> some View {
+        HStack(spacing: 8) {
+            Circle().fill(color).frame(width: 6, height: 6)
+            Text(title)
+                .font(.aigo(.footnote, .medium))
+                .foregroundStyle(Theme.text2)
+            Text("\(count)")
+                .font(.aigo(.footnote))
+                .foregroundStyle(Theme.faint)
+                .contentTransition(.numericText())
+            Spacer(minLength: 0)
+        }
+        .padding(.top, 12)
+        .padding(.horizontal, 2)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
+    }
 
     @ViewBuilder
     private func cardView(_ card: BoardCard) -> some View {
         if let item = card.item {
             AttentionCard(item: item, session: card.session)
-                .contextMenu { if let s = card.session { contextButtons(s) } }
+                .contextMenu { if let s = card.session { contextButtons(s, column: card.column) } }
         } else if let s = card.session {
             SessionCard(session: s, column: card.column, onError: { banner = $0 })
-                .contextMenu { contextButtons(s) }
+                .contextMenu { contextButtons(s, column: card.column) }
         } else if let e = card.external {
             ExternalCard(session: e, column: card.column)
         }
     }
 
+    /// Done today: one line per session.
     @ViewBuilder
-    private func contextButtons(_ s: SessionInfo) -> some View {
+    private func doneRow(_ card: BoardCard) -> some View {
+        if let s = card.session {
+            Button {
+                store.openSession(s.id)
+            } label: {
+                HStack(spacing: 10) {
+                    StatusDot(status: s.status, size: 6)
+                    Text(s.displayTitle)
+                        .font(.aigo(.callout))
+                        .foregroundStyle(Theme.text)
+                        .lineLimit(1)
+                    Spacer(minLength: 6)
+                    Text(Age.short(card.date))
+                        .font(.aigo(.caption))
+                        .foregroundStyle(Theme.faint)
+                }
+                .padding(.horizontal, 12)
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(QuietPressStyle())
+            .contextMenu { contextButtons(s, column: .done) }
+        }
+    }
+
+    @ViewBuilder
+    private func contextButtons(_ s: SessionInfo, column: BoardColumn) -> some View {
         Button {
             store.openSession(s.id)
         } label: {
-            Label("Open", systemImage: "arrow.up.forward.square")
+            Label("Open", systemImage: "arrow.up.right")
+        }
+        if column == .review {
+            Button {
+                act { await store.markSeen(s.id) }
+            } label: {
+                Label("Mark reviewed", systemImage: "checkmark")
+            }
         }
         if s.isRunning {
             Button {
-                act { await store.interrupt(s.id) }
+                act { await store.stop(s.id) }
             } label: {
-                Label("Stop turn", systemImage: "stop.circle")
+                Label("Stop", systemImage: "stop")
             }
             Button(role: .destructive) {
                 killing = s
@@ -265,49 +293,100 @@ struct HomeView: View {
         }
     }
 
-    private var emptyState: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Circle().fill(Theme.lime).frame(width: 8, height: 8)
-                Text("Ready when you are")
-                    .font(.aigo(.caption, .semibold))
-                    .foregroundStyle(Theme.lime)
+    // MARK: - Continue
+
+    @ViewBuilder
+    private var continueSection: some View {
+        let recent = store.recentSessions()
+        if !recent.isEmpty {
+            HStack {
+                Text("Continue")
+                    .font(.aigo(.footnote, .medium))
+                    .foregroundStyle(Theme.text2)
+                Spacer(minLength: 0)
+                Button(store.hasWorkspace ? "All sessions" : "Search") { openContinue() }
+                    .font(.aigo(.footnote))
+                    .foregroundStyle(Theme.muted)
+                    .buttonStyle(.plain)
+                    .frame(minHeight: 32)
             }
-            Text("Nothing is running on \(store.hostLabel).")
-                .font(.aigo(.title3, .semibold))
-                .foregroundStyle(Theme.text)
-                .fixedSize(horizontal: false, vertical: true)
-            Text("Start an agent in one of your projects. Its progress shows up here, and anything it needs from you lands in Needs you.")
-                .font(.aigo(.footnote))
-                .foregroundStyle(Theme.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Button {
-                Haptics.tap()
-                store.openNewWork(agent: NewWorkView.terminalChoice)
-            } label: {
-                Label("Open a terminal", systemImage: "terminal")
+            .padding(.top, 12)
+            .padding(.horizontal, 2)
+            VStack(spacing: 0) {
+                ForEach(recent) { s in
+                    Button {
+                        store.openSession(s.id)
+                    } label: {
+                        HStack(spacing: 10) {
+                            StatusDot(status: s.status, size: 6)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(s.displayTitle)
+                                    .font(.aigo(.callout))
+                                    .foregroundStyle(Theme.text)
+                                    .lineLimit(1)
+                                Text(s.subtitle)
+                                    .font(.aigo(.caption))
+                                    .foregroundStyle(Theme.faint)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                            Spacer(minLength: 6)
+                            Text(Age.short(s.activityDate))
+                                .font(.aigo(.caption))
+                                .foregroundStyle(Theme.faint)
+                        }
+                        .padding(.horizontal, 12)
+                        .frame(minHeight: 50)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(QuietPressStyle())
+                    .contextMenu { contextButtons(s, column: store.column(of: s) ?? .done) }
+                }
             }
-            .buttonStyle(SecondaryButtonStyle())
-            .disabled(store.client == nil)
+            .aigoCard()
         }
-        .padding(12)
-        .aigoCard()
     }
 
-    private var newWorkButton: some View {
-        Button {
-            Haptics.tap()
-            store.openNewWork()
-        } label: {
-            Text("New work")
+    private func openContinue() {
+        Haptics.tap()
+        if store.hasWorkspace {
+            store.path.append(.sessions)
+        } else {
+            store.showSearch = true
         }
-        .buttonStyle(SoftButtonStyle(tint: Theme.lime, minHeight: 46))
-        .disabled(store.client == nil)
-        .accessibilityLabel(Text("Start new work"))
+    }
+
+    // MARK: - Bottom
+
+    private var bottomBar: some View {
+        HStack(spacing: 8) {
+            Button {
+                Haptics.tap()
+                store.openNewWork()
+            } label: {
+                Label("New chat", systemImage: "square.and.pencil")
+            }
+            .buttonStyle(PrimaryButtonStyle(minHeight: 44))
+            .disabled(store.client == nil)
+            .accessibilityLabel(Text("Start a new chat"))
+            Button {
+                openContinue()
+            } label: {
+                Label("Continue", systemImage: "arrow.uturn.forward")
+            }
+            .buttonStyle(SecondaryButtonStyle(minHeight: 44))
+            .disabled(store.client == nil)
+            .accessibilityLabel(Text("Continue a session"))
+        }
+        .frame(maxWidth: 760)
         .padding(.horizontal, Theme.gutter)
         .padding(.top, 8)
         .padding(.bottom, 8)
+        .frame(maxWidth: .infinity)
         .background(Theme.bg.ignoresSafeArea(edges: .bottom))
+        .overlay(alignment: .top) {
+            Rectangle().fill(Theme.line).frame(height: 1)
+        }
     }
 
     private func act(_ op: @escaping () async -> String?) {

@@ -46,12 +46,10 @@ struct ChatThreadView: View {
                         }
                     } label: {
                         Image(systemName: "arrow.down")
-                            .font(.system(size: 14, weight: .bold))
+                            .font(.system(size: 14, weight: Theme.iconWeight))
                             .foregroundStyle(Theme.text)
                             .frame(width: 40, height: 40)
-                            .background(Theme.surface2, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
-                                .strokeBorder(Theme.line, lineWidth: 1))
+                            .background(Theme.raised, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
                     }
                     .buttonStyle(.plain)
                     .padding(12)
@@ -86,11 +84,11 @@ struct ChatThreadView: View {
     private var emptyState: some View {
         VStack(spacing: 10) {
             if !model.loaded && model.error == nil {
-                ProgressView().tint(Theme.secondary)
+                ProgressView().tint(Theme.muted)
             }
             Text(model.error ?? (model.loaded ? "No messages yet. Say what it should do." : "Loading the conversation…"))
                 .font(.aigo(.callout))
-                .foregroundStyle(model.error == nil ? Theme.secondary : Theme.coral)
+                .foregroundStyle(model.error == nil ? Theme.muted : Theme.danger)
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity, alignment: .center)
@@ -144,14 +142,12 @@ struct ChatUserBubble: View {
                     .foregroundStyle(Theme.text)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
-                    .background(Color(aigoHex: 0x1B1E22), in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
-                        .strokeBorder(Color(aigoHex: 0x2A2D31), lineWidth: 1))
+                    .background(Theme.raised, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
                     .textSelection(.enabled)
                 if let by = item.by, !by.isEmpty {
                     Text(by)
                         .font(.aigo(.caption2))
-                        .foregroundStyle(Theme.secondary)
+                        .foregroundStyle(Theme.muted)
                 }
             }
         }
@@ -179,7 +175,7 @@ struct ChatStreamingDot: View {
 
     var body: some View {
         Rectangle()
-            .fill(Theme.lime)
+            .fill(Theme.accent)
             .frame(width: 7, height: 13)
             .opacity(on ? 0.25 : 1)
             .onAppear {
@@ -204,12 +200,12 @@ struct ChatReasoningRow: View {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: 10, weight: .regular))
                     Text(item.isRunning ? "Thinking…" : "Thought")
                         .font(.aigo(.caption))
                     Spacer()
                 }
-                .foregroundStyle(Theme.secondary)
+                .foregroundStyle(Theme.muted)
                 .frame(minHeight: 32)
                 .contentShape(Rectangle())
             }
@@ -218,7 +214,7 @@ struct ChatReasoningRow: View {
             if expanded && !text.isEmpty {
                 Text(text)
                     .font(.aigo(.footnote))
-                    .foregroundStyle(Theme.secondary)
+                    .foregroundStyle(Theme.muted)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.leading, 16)
                     .textSelection(.enabled)
@@ -233,11 +229,11 @@ struct ChatNoticeLine: View {
     var body: some View {
         HStack(spacing: 6) {
             if item.isRunning {
-                ProgressView().controlSize(.mini).tint(Theme.secondary)
+                ProgressView().controlSize(.mini).tint(Theme.muted)
             }
             Text((item.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines))
                 .font(.aigo(.caption))
-                .foregroundStyle(item.status == "error" ? Theme.coralText : Theme.secondary)
+                .foregroundStyle(item.status == "error" ? Theme.danger : Theme.muted)
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity, alignment: .center)
@@ -252,18 +248,18 @@ struct ChatTurnLine: View {
         let error = item.status == "error"
         VStack(spacing: 4) {
             HStack(spacing: 8) {
-                Rectangle().fill(Theme.lineSoft).frame(height: 1)
+                Rectangle().fill(Theme.line).frame(height: 1)
                 Text(label)
                     .font(.aigo(.caption2))
-                    .foregroundStyle(error ? Theme.coralText : Theme.secondary)
+                    .foregroundStyle(error ? Theme.danger : Theme.muted)
                     .lineLimit(1)
                     .fixedSize()
-                Rectangle().fill(Theme.lineSoft).frame(height: 1)
+                Rectangle().fill(Theme.line).frame(height: 1)
             }
             if error, let t = item.text, !t.isEmpty {
                 Text(t)
                     .font(.aigo(.caption))
-                    .foregroundStyle(Theme.coralText)
+                    .foregroundStyle(Theme.danger)
                     .multilineTextAlignment(.center)
                     .textSelection(.enabled)
             }
@@ -318,8 +314,8 @@ struct ChatToolRow: View {
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: icon)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(item.status == "error" ? Theme.coral : Theme.secondary)
+                        .font(.system(size: 11, weight: .regular))
+                        .foregroundStyle(item.status == "error" ? Theme.danger : Theme.muted)
                         .frame(width: 14)
                     Text(verb)
                         .font(.aigo(.caption, .semibold))
@@ -327,7 +323,7 @@ struct ChatToolRow: View {
                         .fixedSize()
                     Text(oneLine(tool.title ?? ""))
                         .font(.aigo(.caption))
-                        .foregroundStyle(Theme.secondary)
+                        .foregroundStyle(Theme.muted)
                         .lineLimit(1)
                         .truncationMode(.tail)
                     Spacer(minLength: 4)
@@ -356,21 +352,21 @@ struct ChatToolRow: View {
     private var statusView: some View {
         switch item.status {
         case "running":
-            ProgressView().controlSize(.mini).tint(Theme.lime)
+            ProgressView().controlSize(.mini).tint(Theme.accent)
         case "error":
             Text(tool.exit.map { "exit \($0)" } ?? "failed")
                 .font(.aigo(.caption2))
-                .foregroundStyle(Theme.coralText)
+                .foregroundStyle(Theme.danger)
                 .fixedSize()
         case "declined":
-            Text("declined").font(.aigo(.caption2)).foregroundStyle(Theme.coralText).fixedSize()
+            Text("declined").font(.aigo(.caption2)).foregroundStyle(Theme.danger).fixedSize()
         case "interrupted":
-            Text("stopped").font(.aigo(.caption2)).foregroundStyle(Theme.secondary).fixedSize()
+            Text("stopped").font(.aigo(.caption2)).foregroundStyle(Theme.muted).fixedSize()
         default:
             if let ms = item.ms, ms > 0 {
                 Text(ChatFormat.duration(ms))
                     .font(.aigo(.caption2))
-                    .foregroundStyle(Theme.secondary)
+                    .foregroundStyle(Theme.muted)
                     .fixedSize()
             }
         }
@@ -388,7 +384,7 @@ struct ChatToolRow: View {
             if let detail = tool.detail, !detail.isEmpty {
                 Text(detail)
                     .font(.aigo(.caption2))
-                    .foregroundStyle(Theme.secondary)
+                    .foregroundStyle(Theme.muted)
                     .lineLimit(3)
                     .truncationMode(.middle)
             }
@@ -446,7 +442,7 @@ struct ChatOutputView: View {
             if lines.count > 300 {
                 Text("… \(lines.count - 300) earlier lines")
                     .font(.aigo(.caption2))
-                    .foregroundStyle(Theme.secondary)
+                    .foregroundStyle(Theme.muted)
             }
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(shown.joined(separator: "\n"))
@@ -455,7 +451,7 @@ struct ChatOutputView: View {
                     .fixedSize()
                     .padding(8)
             }
-            .background(Theme.codeBg, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+            .background(Theme.term, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
             .textSelection(.enabled)
         }
     }
@@ -477,7 +473,7 @@ struct ChatDiffView: View {
             }
             .padding(8)
         }
-        .background(Theme.codeBg, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+        .background(Theme.term, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
         .textSelection(.enabled)
     }
 
@@ -496,7 +492,7 @@ struct ChatPlanView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Plan")
                 .font(.aigo(.caption, .semibold))
-                .foregroundStyle(Theme.secondary)
+                .foregroundStyle(Theme.muted)
             if let t = item.text?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty, (item.steps ?? []).isEmpty {
                 ChatMarkdown(text: t)
             }
@@ -504,13 +500,13 @@ struct ChatPlanView: View {
                 let step = pair.element
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Image(systemName: icon(step.status))
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: 12, weight: .regular))
                         .foregroundStyle(color(step.status))
                         .frame(width: 14)
                     Text(step.text ?? "")
                         .font(.aigo(.footnote))
-                        .foregroundStyle(step.status == "done" ? Theme.secondary : Theme.text)
-                        .strikethrough(step.status == "done", color: Theme.secondary)
+                        .foregroundStyle(step.status == "done" ? Theme.muted : Theme.text)
+                        .strikethrough(step.status == "done", color: Theme.muted)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .accessibilityElement(children: .combine)
@@ -532,9 +528,9 @@ struct ChatPlanView: View {
 
     private func color(_ status: String?) -> Color {
         switch status {
-        case "done": return Theme.ice
-        case "running": return Theme.lime
-        default: return Theme.secondary
+        case "done": return Theme.done
+        case "running": return Theme.work
+        default: return Theme.muted
         }
     }
 }
@@ -560,25 +556,25 @@ struct ChatRequestCard: View {
             HStack(spacing: 6) {
                 Text(request.title ?? (request.kind == "question" ? "A question" : "Needs your approval"))
                     .font(.aigo(.footnote, .semibold))
-                    .foregroundStyle(open ? Theme.coralText : Theme.text)
+                    .foregroundStyle(open ? Theme.ask : Theme.text)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 4)
                 if let tool = request.tool, !tool.isEmpty {
                     Text(tool)
                         .font(.aigo(.caption2))
-                        .foregroundStyle(Theme.secondary)
+                        .foregroundStyle(Theme.muted)
                         .fixedSize()
                 }
             }
             if let body = request.body, !body.isEmpty {
                 Text(body)
                     .font(.custom(TerminalScreen.fontName, fixedSize: 12))
-                    .foregroundStyle(request.kind == "approval" ? Theme.coralCode : Theme.text.opacity(0.92))
+                    .foregroundStyle(request.kind == "approval" ? Theme.text : Theme.text.opacity(0.92))
                     .lineLimit(12)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 9)
-                    .background(Theme.codeBg, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+                    .background(Theme.term, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
                     .textSelection(.enabled)
             }
             if open {
@@ -589,13 +585,13 @@ struct ChatRequestCard: View {
             if let error {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
                     .font(.aigo(.footnote))
-                    .foregroundStyle(Theme.coral)
+                    .foregroundStyle(Theme.ask)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .aigoCard(border: open ? Theme.coral : Theme.line, fill: open ? Theme.coralWash : Theme.surface)
+        .aigoCard(border: open ? Theme.askLine : Theme.line, fill: open ? Theme.askSoft : Theme.panel)
         .disabled(busy)
         .opacity(busy ? 0.6 : 1)
         .animation(.easeInOut(duration: 0.2), value: item.status)
@@ -607,11 +603,11 @@ struct ChatRequestCard: View {
         if item.status == "answered" {
             Label("\((request.answer ?? "").isEmpty ? "Answered" : request.answer!)\(who)", systemImage: "checkmark")
                 .font(.aigo(.caption))
-                .foregroundStyle(Theme.secondary)
+                .foregroundStyle(Theme.muted)
         } else {
             Text("No longer answerable.")
                 .font(.aigo(.caption))
-                .foregroundStyle(Theme.secondary)
+                .foregroundStyle(Theme.muted)
         }
     }
 
@@ -623,7 +619,7 @@ struct ChatRequestCard: View {
             VStack(alignment: .leading, spacing: 8) {
                 Label("This looks destructive. Run it anyway?", systemImage: "exclamationmark.triangle.fill")
                     .font(.aigo(.footnote, .semibold))
-                    .foregroundStyle(Theme.coral)
+                    .foregroundStyle(Theme.ask)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {
                     Button("Yes, \(c.title)") {
@@ -631,7 +627,7 @@ struct ChatRequestCard: View {
                         Haptics.approve()
                         send(option: c.id)
                     }
-                    .buttonStyle(SoftButtonStyle(tint: Theme.coral, text: Theme.coralButtonText))
+                    .buttonStyle(SoftButtonStyle(tint: Theme.ask, text: Theme.ask))
                     Button("Cancel") {
                         Haptics.tap()
                         confirming = nil
@@ -662,8 +658,8 @@ struct ChatRequestCard: View {
 
     private func style(_ option: ChatOption) -> AnyButtonStyleBox {
         switch option.style ?? "" {
-        case "primary": return AnyButtonStyleBox(.soft(Theme.coral, Theme.coralButtonText))
-        case "danger": return AnyButtonStyleBox(.secondary(Theme.coralText))
+        case "primary": return AnyButtonStyleBox(.soft(Theme.ask, Theme.ask))
+        case "danger": return AnyButtonStyleBox(.secondary(Theme.ask))
         default: return AnyButtonStyleBox(.secondary(Theme.text))
         }
     }
@@ -675,9 +671,9 @@ struct ChatRequestCard: View {
             ForEach(questions) { q in
                 VStack(alignment: .leading, spacing: 6) {
                     if let h = q.header, !h.isEmpty {
-                        Text(h.uppercased())
+                        Text(h)
                             .font(.aigo(.caption2))
-                            .foregroundStyle(Theme.secondary)
+                            .foregroundStyle(Theme.muted)
                     }
                     if let t = q.text, !t.isEmpty {
                         Text(t)
@@ -699,7 +695,7 @@ struct ChatRequestCard: View {
                                 if !single {
                                     Image(systemName: picked ? "largecircle.fill.circle" : "circle")
                                         .font(.system(size: 13))
-                                        .foregroundStyle(picked ? Theme.lime : Theme.secondary)
+                                        .foregroundStyle(picked ? Theme.accent : Theme.muted)
                                 }
                                 Text(o.title)
                                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -723,7 +719,7 @@ struct ChatRequestCard: View {
                         .foregroundStyle(Theme.text)
                         .padding(.horizontal, 10)
                         .frame(minHeight: 40)
-                        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+                        .background(Theme.panel, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
                         .overlay(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
                             .strokeBorder(Theme.line, lineWidth: 1))
                     }
@@ -735,7 +731,7 @@ struct ChatRequestCard: View {
                     Haptics.approve()
                     run { await model.respond(requestId: item.id, answers: answers) }
                 }
-                .buttonStyle(SoftButtonStyle(tint: Theme.coral, text: Theme.coralButtonText))
+                .buttonStyle(SoftButtonStyle(tint: Theme.ask, text: Theme.ask))
                 .disabled(!ready)
             }
         }
@@ -818,13 +814,13 @@ struct ChatComposer: View {
                 if t.live == false {
                     Text("Stopped. Your next message resumes it.")
                         .font(.aigo(.caption2))
-                        .foregroundStyle(Theme.secondary)
+                        .foregroundStyle(Theme.muted)
                 }
             }
             HStack(alignment: .bottom, spacing: 8) {
                 Text("›")
-                    .font(.aigo(.body, .bold))
-                    .foregroundStyle(Theme.lime)
+                    .font(.aigo(.body, .medium))
+                    .foregroundStyle(Theme.faint)
                     .frame(minHeight: 42)
                 TextField(placeholder, text: $draft, axis: .vertical)
                     .lineLimit(1...6)
@@ -839,15 +835,15 @@ struct ChatComposer: View {
                     } label: {
                         Group {
                             if stopping {
-                                ProgressView().tint(Theme.coral)
+                                ProgressView().tint(Theme.danger)
                             } else {
                                 Image(systemName: "stop.fill")
-                                    .font(.system(size: 13, weight: .bold))
+                                    .font(.system(size: 13, weight: Theme.iconWeight))
                             }
                         }
                         .frame(width: 40, height: 40)
-                        .background(Theme.coral.opacity(0.15), in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
-                        .foregroundStyle(Theme.coral)
+                        .background(Theme.danger.opacity(0.15), in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+                        .foregroundStyle(Theme.danger)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(Text("Stop the turn"))
@@ -859,20 +855,20 @@ struct ChatComposer: View {
                 } label: {
                     Group {
                         if sending {
-                            ProgressView().tint(Theme.lime)
+                            ProgressView().tint(Theme.muted)
                         } else if model.isRunning {
                             Text("Queue")
-                                .font(.aigo(.caption, .bold))
+                                .font(.aigo(.caption, .medium))
                                 .padding(.horizontal, 8)
                         } else {
                             Image(systemName: "arrow.up")
-                                .font(.system(size: 15, weight: .bold))
+                                .font(.system(size: 15, weight: .regular))
                         }
                     }
                     .frame(minWidth: 40, minHeight: 40)
-                    .background(Theme.lime.opacity(canSend ? 0.15 : 0.06),
+                    .background(canSend ? Theme.accentBg : Theme.tint,
                                 in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
-                    .foregroundStyle(canSend ? Theme.lime : Theme.secondary)
+                    .foregroundStyle(canSend ? Theme.accentInk : Theme.faint)
                 }
                 .buttonStyle(.plain)
                 .disabled(!canSend)
@@ -882,9 +878,9 @@ struct ChatComposer: View {
             .padding(.leading, 14)
             .padding(.trailing, 2)
             .padding(.vertical, 1)
-            .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+            .background(Theme.panel, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
-                .strokeBorder(Color(aigoHex: 0x2A2D31), lineWidth: 1))
+                .strokeBorder(Theme.line, lineWidth: 1))
         }
         .animation(.easeInOut(duration: 0.2), value: model.isRunning)
     }
@@ -963,7 +959,7 @@ struct ChatComposer: View {
                     if let pct = t.ctxPct, pct > 0 {
                         Text("ctx \(pct)%")
                             .font(.aigo(.caption2))
-                            .foregroundStyle(pct >= 85 ? Theme.coralText : Theme.secondary)
+                            .foregroundStyle(pct >= 85 ? Theme.ask : Theme.muted)
                             .padding(.horizontal, 6)
                             .fixedSize()
                     }
@@ -975,17 +971,17 @@ struct ChatComposer: View {
     private func chip(_ title: String, icon: String) -> some View {
         HStack(spacing: 5) {
             Image(systemName: icon)
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: 10, weight: .regular))
             Text(title)
                 .font(.aigo(.caption))
                 .lineLimit(1)
             Image(systemName: "chevron.down")
-                .font(.system(size: 8, weight: .semibold))
+                .font(.system(size: 8, weight: .regular))
         }
         .foregroundStyle(Theme.text)
         .padding(.horizontal, 10)
         .frame(minHeight: 32)
-        .background(Theme.softWhite, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+        .background(Theme.tint, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
         .fixedSize()
     }
 

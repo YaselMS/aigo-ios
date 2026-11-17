@@ -7,8 +7,9 @@ enum SessionTab: String, Hashable, CaseIterable {
     case changes = "Changes"
 }
 
-/// The conversation: "‹" back to the board, title + state pill, Chat /
-/// Terminal / Changes tabs, agent questions as option buttons, composer.
+/// The conversation: "‹" back, title and one muted state line, the ⋯ menu
+/// (views Chat / Terminal / Changes and actions), agent questions as option
+/// buttons, composer.
 struct SessionView: View {
     let sessionID: String
 
@@ -48,7 +49,6 @@ struct SessionView: View {
         VStack(spacing: 0) {
             header
             if let s = session {
-                tabBar(s)
                 statusStrip(s)
 
                 Group {
@@ -201,31 +201,31 @@ struct SessionView: View {
 
     // MARK: - Header
 
-    /// "‹" back to the board (with how many others need you), title,
-    /// "agent · folder", the state pill and the actions menu.
+    /// Calm header: back (with how many others need you), title, one muted
+    /// line (state dot · state · agent · folder) and the ⋯ menu, which also
+    /// holds the views (Chat / Terminal / Changes).
     private var header: some View {
         let others = othersNeedingYou
-        return HStack(spacing: 10) {
+        return HStack(spacing: 4) {
             Button {
                 dismiss()
             } label: {
-                HStack(spacing: 4) {
+                HStack(spacing: 3) {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: 17, weight: Theme.iconWeight))
                     if others > 0 {
                         Text("\(others)")
-                            .font(.aigo(size: 12, .semibold))
-                            .foregroundStyle(Theme.coral)
+                            .font(.aigo(size: 12, .medium))
+                            .foregroundStyle(Theme.ask)
                     }
                 }
-                .foregroundStyle(Theme.text)
-                .padding(.horizontal, others > 0 ? 8 : 0)
+                .foregroundStyle(Theme.text2)
+                .padding(.horizontal, others > 0 ? 6 : 0)
                 .frame(minWidth: 40, minHeight: 40)
-                .background(Theme.softWhite, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(Text(others > 0 ? "Back to the board, \(others) more need you" : "Back to the board"))
+            .buttonStyle(QuietPressStyle())
+            .accessibilityLabel(Text(others > 0 ? "Back, \(others) more need you" : "Back"))
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(session?.displayTitle ?? "Session")
@@ -233,27 +233,40 @@ struct SessionView: View {
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
                 if let s = session {
-                    Text(s.isExternal ? "\(s.subtitle) · outside Aigo" : s.subtitle)
-                        .font(.aigo(.caption2))
-                        .foregroundStyle(Theme.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                    HStack(spacing: 6) {
+                        StatusDot(status: dotStatus(s), size: 6)
+                        Text(metaLine(s))
+                            .font(.aigo(.caption))
+                            .foregroundStyle(Theme.muted)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .contentTransition(.opacity)
+                    }
+                    .animation(.easeInOut(duration: 0.2), value: metaLine(s))
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isHeader)
 
-            if let s = session {
-                statePill(s)
+            if let s = session, tab != mainTab(s) {
+                QuietIconButton(symbol: mainTab(s) == .terminal ? "terminal" : "bubble.left",
+                                label: "Back to \(mainTab(s).rawValue)") {
+                    tab = mainTab(s)
+                }
+            }
+            if switchingMode {
+                ProgressView().controlSize(.small).tint(Theme.muted)
+                    .frame(width: 32, height: 40)
             }
             actionsMenu
         }
-        .padding(.horizontal, 14)
-        .padding(.top, 4)
-        .padding(.bottom, 10)
+        .padding(.leading, 6)
+        .padding(.trailing, 4)
+        .padding(.top, 2)
+        .padding(.bottom, 6)
         .overlay(alignment: .bottom) {
-            Rectangle().fill(Theme.lineSoft).frame(height: 1)
+            Rectangle().fill(Theme.line).frame(height: 1)
         }
     }
 
@@ -262,79 +275,52 @@ struct SessionView: View {
         return cards.filter { ($0.item?.sessionId ?? $0.session?.id) != sessionID }.count
     }
 
-    private func pill(for s: SessionInfo) -> (String, Color, Color) {
-        if !store.pendingItems(for: sessionID).isEmpty || s.status == .needsYou {
-            return ("Needs you", Theme.coralText, Color(aigoHex: 0x2A1712))
+    /// The view a session opens on: chat for agents, the terminal otherwise.
+    private func mainTab(_ s: SessionInfo) -> SessionTab {
+        (s.isChat || s.isAgent) ? .chat : .terminal
+    }
+
+    /// Views offered in the ⋯ menu (Terminal on a chat session switches its mode).
+    private func tabs(_ s: SessionInfo) -> [SessionTab] {
+        if s.isChat {
+            return store.canSwitchMode ? [.chat, .terminal, .changes] : [.chat, .changes]
         }
+        return s.isAgent ? [.chat, .terminal, .changes] : [.terminal, .changes]
+    }
+
+    private func stateWord(_ s: SessionInfo) -> String {
+        if !store.pendingItems(for: sessionID).isEmpty || s.status == .needsYou { return "Needs you" }
         switch s.status {
-        case .working, .stalled: return ("Working", Theme.lime, Color(aigoHex: 0x1E2410))
-        case .exited: return ("Exited", Theme.secondary, Theme.surface2)
+        case .working, .stalled: return "Working"
+        case .exited: return "Exited"
         default: break
         }
-        if store.column(of: s) == .review {
-            return ("Review", Theme.iceText, Theme.ice.opacity(0.14))
-        }
-        return (s.isAgent ? "Idle" : "Terminal", Theme.secondary, Theme.surface2)
+        if store.column(of: s) == .review { return "To review" }
+        return s.isAgent ? "Idle" : "Terminal"
     }
 
-    private func statePill(_ s: SessionInfo) -> some View {
-        let p = pill(for: s)
-        return Text(p.0)
-            .font(.aigo(size: 11))
-            .foregroundStyle(p.1)
-            .lineLimit(1)
-            .fixedSize()
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(p.2, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
-            .animation(.easeInOut(duration: 0.2), value: p.0)
+    private func dotStatus(_ s: SessionInfo) -> SessionStatus {
+        store.pendingItems(for: sessionID).isEmpty ? s.status : .needsYou
     }
 
-    private func tabBar(_ s: SessionInfo) -> some View {
-        let tabs: [SessionTab]
-        if s.isChat {
-            // Terminal here switches the session's mode (host API §7k).
-            tabs = store.canSwitchMode ? [.chat, .terminal, .changes] : [.chat, .changes]
-        } else {
-            tabs = s.isAgent ? [.chat, .terminal, .changes] : [.terminal, .changes]
-        }
-        return HStack(spacing: 6) {
-            ForEach(tabs, id: \.self) { t in
-                let on = t == tab
-                Button {
-                    if s.isChat && t == .terminal {
-                        Haptics.tap()
-                        if chat.isRunning {
-                            confirmTerminal = true
-                        } else {
-                            switchMode("terminal")
-                        }
-                    } else {
-                        tab = t
-                    }
-                } label: {
-                    Group {
-                        if s.isChat && t == .terminal && switchingMode {
-                            ProgressView().controlSize(.small).tint(Theme.text)
-                        } else {
-                            Text(t.rawValue)
-                        }
-                    }
-                        .font(.aigo(.footnote, on ? .semibold : .regular))
-                        .foregroundStyle(on ? Theme.bg : Theme.text)
-                        .frame(maxWidth: .infinity, minHeight: Theme.buttonHeight)
-                        .background(on ? Theme.text : Color.clear,
-                                    in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
-                            .strokeBorder(on ? Color.clear : Color(aigoHex: 0x2A2D31), lineWidth: 1))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(on ? [.isSelected, .isButton] : .isButton)
+    private func metaLine(_ s: SessionInfo) -> String {
+        var parts = [stateWord(s), s.isExternal ? "\(s.subtitle) · outside Aigo" : s.subtitle]
+        if tab != mainTab(s) { parts.append(tab.rawValue) }
+        return parts.joined(separator: " · ")
+    }
+
+    /// Picks a view from the ⋯ menu.
+    private func choose(_ t: SessionTab, _ s: SessionInfo) {
+        if s.isChat && t == .terminal {
+            Haptics.tap()
+            if chat.isRunning {
+                confirmTerminal = true
+            } else {
+                switchMode("terminal")
             }
+        } else {
+            tab = t
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
     }
 
     /// One line: what it is doing now, with Stop (working) or Resume (exited).
@@ -347,7 +333,7 @@ struct SessionView: View {
                 StatusDot(status: s.status, size: 8)
                 Text(active ? nowText(s) : s.nowLine)
                     .font(.aigo(.footnote))
-                    .foregroundStyle(Theme.secondary)
+                    .foregroundStyle(Theme.muted)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .contentTransition(.opacity)
@@ -368,7 +354,7 @@ struct SessionView: View {
                     } label: {
                         Label(s.isAgent ? "Resume" : "Restart", systemImage: "arrow.clockwise")
                     }
-                    .buttonStyle(ChipButtonStyle(tint: Theme.lime))
+                    .buttonStyle(ChipButtonStyle(tint: Theme.accent))
                 }
             }
             .padding(.horizontal, 16)
@@ -481,8 +467,8 @@ struct SessionView: View {
     private var composer: some View {
         HStack(alignment: .bottom, spacing: 8) {
             Text("›")
-                .font(.aigo(.body, .bold))
-                .foregroundStyle(Theme.lime)
+                .font(.aigo(.body, .medium))
+                .foregroundStyle(Theme.faint)
                 .frame(minHeight: 42)
             TextField("Message \(store.agentName(session?.agent))…", text: $draft, axis: .vertical)
                 .lineLimit(1...5)
@@ -505,16 +491,16 @@ struct SessionView: View {
             } label: {
                 Group {
                     if sending {
-                        ProgressView().tint(Theme.lime)
+                        ProgressView().tint(Theme.muted)
                     } else {
                         Image(systemName: "arrow.up")
-                            .font(.system(size: 15, weight: .bold))
+                            .font(.system(size: 15, weight: .regular))
                     }
                 }
                 .frame(width: 40, height: 40)
-                .background(Theme.lime.opacity(canSend ? 0.15 : 0.06),
+                .background(canSend ? Theme.accentBg : Theme.tint,
                             in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
-                .foregroundStyle(canSend ? Theme.lime : Theme.secondary)
+                .foregroundStyle(canSend ? Theme.accentInk : Theme.faint)
             }
             .buttonStyle(.plain)
             .disabled(!canSend)
@@ -524,9 +510,9 @@ struct SessionView: View {
         .padding(.leading, 14)
         .padding(.trailing, 2)
         .padding(.vertical, 1)
-        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
-            .strokeBorder(Color(aigoHex: 0x2A2D31), lineWidth: 1))
+            .strokeBorder(Theme.line, lineWidth: 1))
     }
 
     private var canSend: Bool {
@@ -536,19 +522,27 @@ struct SessionView: View {
     private var actionsMenu: some View {
         Menu {
             if let s = session {
+                Section("View") {
+                    ForEach(tabs(s), id: \.self) { t in
+                        Button {
+                            choose(t, s)
+                        } label: {
+                            if t == tab {
+                                Label(t.rawValue, systemImage: "checkmark")
+                            } else if s.isChat && t == .terminal {
+                                Label("Open in terminal", systemImage: "terminal")
+                            } else {
+                                Label(t.rawValue, systemImage: t == .terminal ? "terminal" : (t == .changes ? "arrow.triangle.branch" : "bubble.left"))
+                            }
+                        }
+                    }
+                }
                 if s.isChat {
                     if chat.isRunning {
                         Button {
                             act { await chat.interrupt() }
                         } label: {
-                            Label("Stop turn", systemImage: "stop.circle")
-                        }
-                    }
-                    if store.canSwitchMode {
-                        Button {
-                            if chat.isRunning { confirmTerminal = true } else { switchMode("terminal") }
-                        } label: {
-                            Label("Open in terminal", systemImage: "terminal")
+                            Label("Stop", systemImage: "stop")
                         }
                     }
                 } else if store.canSwitchMode && s.canChat && !(s.agentSessionId ?? "").isEmpty {
@@ -566,9 +560,9 @@ struct SessionView: View {
                     }
                 } else if s.isRunning {
                     Button {
-                        act { await store.interrupt(sessionID) }
+                        act { await store.stop(sessionID) }
                     } label: {
-                        Label("Stop turn", systemImage: "stop.circle")
+                        Label("Stop", systemImage: "stop")
                     }
                     Button {
                         act { await terminal.send("\u{03}") }
@@ -591,7 +585,7 @@ struct SessionView: View {
                     Button {
                         act { await store.markSeen(sessionID) }
                     } label: {
-                        Label("Looks good", systemImage: "checkmark")
+                        Label("Mark reviewed", systemImage: "checkmark")
                     }
                 }
                 if let cwd = s.cwd, !cwd.isEmpty {
@@ -610,13 +604,12 @@ struct SessionView: View {
             }
         } label: {
             Image(systemName: "ellipsis")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Theme.text)
+                .font(.system(size: 17, weight: Theme.iconWeight))
+                .foregroundStyle(Theme.muted)
                 .frame(width: 40, height: 40)
-                .background(Theme.softWhite, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
                 .contentShape(Rectangle())
         }
-        .accessibilityLabel(Text("Session actions"))
+        .accessibilityLabel(Text("Views and session actions"))
     }
 
     // MARK: - Behaviour
@@ -677,7 +670,7 @@ struct MenuChoices: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text((title ?? "").isEmpty ? "The agent is asking" : title!)
                     .font(.aigo(.footnote))
-                    .foregroundStyle(Theme.coralText)
+                    .foregroundStyle(Theme.ask)
                     .lineLimit(3)
                 if let note = menu.guidance {
                     MenuNote(text: note)
@@ -693,7 +686,7 @@ struct MenuChoices: View {
             }
         }
         .padding(10)
-        .aigoCard(border: Theme.coral, fill: Theme.coralWash)
+        .aigoCard(border: Theme.askLine, fill: Theme.askSoft)
     }
 
     private var optionList: some View {
@@ -727,10 +720,10 @@ struct KeyBar: View {
         HStack(spacing: 6) {
             Button(action: onKeyboard) {
                 Image(systemName: keyboardShown ? "keyboard.chevron.compact.down" : "keyboard")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(keyboardShown ? Theme.bg : Theme.lime)
+                    .font(.system(size: 16, weight: Theme.iconWeight))
+                    .foregroundStyle(keyboardShown ? Theme.accentInk : Theme.accentText)
                     .frame(width: 44, height: 40)
-                    .background(keyboardShown ? Theme.lime : Theme.lime.opacity(0.15),
+                    .background(keyboardShown ? Theme.accentBg : Theme.accentSoft,
                                 in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
             }
             .buttonStyle(.plain)
@@ -744,11 +737,11 @@ struct KeyBar: View {
                             onKey(k)
                         } label: {
                             Text(k.label)
-                                .font(.aigo(.callout, .semibold))
+                                .font(.aigoMono(size: 14, .medium))
                                 .foregroundStyle(Theme.text)
                                 .padding(.horizontal, 10)
                                 .frame(minWidth: 40, minHeight: 40)
-                                .background(Theme.softWhite, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+                                .background(Theme.tint, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel(Text(k.accessibility))
@@ -761,11 +754,11 @@ struct KeyBar: View {
     private func latch(_ title: String, on: Bool, accessibility: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.aigo(.callout, .semibold))
-                .foregroundStyle(on ? Theme.bg : Theme.text)
+                .font(.aigo(.callout, .medium))
+                .foregroundStyle(on ? Theme.accentInk : Theme.text)
                 .padding(.horizontal, 10)
                 .frame(minWidth: 40, minHeight: 40)
-                .background(on ? Theme.lime : Theme.softWhite,
+                .background(on ? Theme.accentBg : Theme.tint,
                             in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
         }
         .buttonStyle(.plain)
@@ -802,7 +795,7 @@ struct ChangesView: View {
                         fileRow(file)
                     }
                 } else {
-                    ProgressView().tint(Theme.secondary)
+                    ProgressView().tint(Theme.muted)
                         .frame(maxWidth: .infinity)
                         .padding(.top, 30)
                 }
@@ -817,7 +810,7 @@ struct ChangesView: View {
     private func note(_ text: String) -> some View {
         Text(text)
             .font(.aigo(.footnote))
-            .foregroundStyle(Theme.secondary)
+            .foregroundStyle(Theme.muted)
             .multilineTextAlignment(.center)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 30)
@@ -827,7 +820,7 @@ struct ChangesView: View {
         HStack(spacing: 8) {
             Image(systemName: "arrow.triangle.branch")
                 .font(.system(size: 12))
-                .foregroundStyle(Theme.secondary)
+                .foregroundStyle(Theme.muted)
             Text(s.branch ?? "")
                 .font(.aigo(.caption))
                 .foregroundStyle(Theme.text)
@@ -836,9 +829,9 @@ struct ChangesView: View {
             let n = s.files?.count ?? 0
             Text(n == 1 ? "1 file" : "\(n) files")
                 .font(.aigo(.caption))
-                .foregroundStyle(Theme.secondary)
-            Text("+\(s.added ?? 0)").font(.aigo(.caption)).foregroundStyle(Theme.lime)
-            Text("−\(s.deleted ?? 0)").font(.aigo(.caption)).foregroundStyle(Theme.coral)
+                .foregroundStyle(Theme.muted)
+            Text("+\(s.added ?? 0)").font(.aigo(.caption)).foregroundStyle(Theme.add)
+            Text("−\(s.deleted ?? 0)").font(.aigo(.caption)).foregroundStyle(Theme.danger)
         }
         .padding(.bottom, 4)
     }
@@ -858,8 +851,8 @@ struct ChangesView: View {
             } label: {
                 HStack(spacing: 8) {
                     Text(file.letter)
-                        .font(.aigo(.caption, .bold))
-                        .foregroundStyle(file.letter == "D" ? Theme.coral : (file.letter == "?" || file.letter == "A" ? Theme.lime : Theme.ice))
+                        .font(.aigo(.caption, .medium))
+                        .foregroundStyle(file.letter == "D" ? Theme.danger : (file.letter == "?" || file.letter == "A" ? Theme.add : Theme.review))
                         .frame(width: 14)
                     Text(file.path)
                         .font(.aigo(.caption))
@@ -868,8 +861,8 @@ struct ChangesView: View {
                         .truncationMode(.head)
                     Spacer(minLength: 4)
                     if file.binary != true {
-                        Text("+\(file.added ?? 0)").font(.aigo(.caption2)).foregroundStyle(Theme.lime)
-                        Text("−\(file.deleted ?? 0)").font(.aigo(.caption2)).foregroundStyle(Theme.coral)
+                        Text("+\(file.added ?? 0)").font(.aigo(.caption2)).foregroundStyle(Theme.add)
+                        Text("−\(file.deleted ?? 0)").font(.aigo(.caption2)).foregroundStyle(Theme.danger)
                     }
                 }
                 .padding(.horizontal, 10)
@@ -898,10 +891,10 @@ struct ChangesView: View {
                 }
                 .padding(10)
             }
-            .background(Theme.codeBg)
+            .background(Theme.term)
             .textSelection(.enabled)
         } else {
-            ProgressView().tint(Theme.secondary)
+            ProgressView().tint(Theme.muted)
                 .frame(maxWidth: .infinity)
                 .padding(10)
         }
@@ -915,10 +908,10 @@ struct ChangesView: View {
     }
 
     static func color(_ line: String) -> Color {
-        if line.hasPrefix("+") { return Theme.lime }
-        if line.hasPrefix("-") { return Theme.coralText }
-        if line.hasPrefix("@@") { return Theme.ice }
-        return Theme.secondary
+        if line.hasPrefix("+") { return Theme.add }
+        if line.hasPrefix("-") { return Theme.danger }
+        if line.hasPrefix("@@") { return Theme.review }
+        return Theme.muted
     }
 
     private func load() async {
@@ -951,7 +944,7 @@ struct MenuNote: View {
     var body: some View {
         Text(text)
             .font(.aigo(.caption))
-            .foregroundStyle(Theme.secondary)
+            .foregroundStyle(Theme.muted)
             .lineLimit(1)
             .truncationMode(.tail)
             .accessibilityLabel(Text("Note: \(text)"))
@@ -969,14 +962,14 @@ struct MenuOptionLabel: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             if recommended {
                 Text("recommended")
-                    .font(.aigo(size: 10, .semibold))
-                    .foregroundStyle(Theme.lime)
+                    .font(.aigo(size: 10, .medium))
+                    .foregroundStyle(Theme.accentText)
                     .lineLimit(1)
                     .fixedSize()
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .overlay(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
-                        .strokeBorder(Theme.lime.opacity(0.45), lineWidth: 1))
+                        .strokeBorder(Theme.accentLine, lineWidth: 1))
             }
         }
     }

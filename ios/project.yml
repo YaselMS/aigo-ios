@@ -10,7 +10,7 @@ settings:
   base:
     SWIFT_VERSION: "5.0"
     SWIFT_STRICT_CONCURRENCY: minimal
-    MARKETING_VERSION: "0.4.1"
+    MARKETING_VERSION: "0.5.0"
     CURRENT_PROJECT_VERSION: "1"
     IPHONEOS_DEPLOYMENT_TARGET: "17.0"
     TARGETED_DEVICE_FAMILY: "1,2"
@@ -64,7 +64,6 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-        UIUserInterfaceStyle: Dark
         NSLocalNetworkUsageDescription: Aigo connects to the Aigo host running on your PC over your local network or Tailscale.
         NSCameraUsageDescription: Aigo uses the camera to scan the pairing QR code shown on your PC.
         NSSupportsLiveActivities: true
@@ -81,7 +80,6 @@ targets:
           - JetBrainsMono-Medium.ttf
           - JetBrainsMono-Regular.ttf
           - JetBrainsMono-SemiBold.ttf
-          - ShareTechMono-Regular.ttf
           - UbuntuSansMono-Bold.ttf
           - UbuntuSansMono-Medium.ttf
           - UbuntuSansMono-Regular.ttf
@@ -133,7 +131,6 @@ targets:
           - JetBrainsMono-Medium.ttf
           - JetBrainsMono-Regular.ttf
           - JetBrainsMono-SemiBold.ttf
-          - ShareTechMono-Regular.ttf
           - UbuntuSansMono-Bold.ttf
           - UbuntuSansMono-Medium.ttf
           - UbuntuSansMono-Regular.ttf

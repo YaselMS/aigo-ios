@@ -28,7 +28,7 @@ struct NewWorkView: View {
                             ProgressView().controlSize(.small)
                             Text("Looking for agents on \(store.hostLabel)…")
                                 .font(.aigo(.footnote))
-                                .foregroundStyle(Theme.secondary)
+                                .foregroundStyle(Theme.muted)
                         }
                         .frame(minHeight: 44)
                     }
@@ -40,11 +40,11 @@ struct NewWorkView: View {
                     }
                     choiceRow(id: NewWorkView.terminalChoice, title: "Terminal", detail: "A plain shell", enabled: true)
                 }
-                .listRowBackground(Theme.surface)
+                .listRowBackground(Theme.panel)
 
                 Section {
                     TextField("C:\\Users\\you\\project", text: $folder)
-                        .font(Theme.mono)
+                        .font(Theme.body)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled(true)
                         .frame(minHeight: 44)
@@ -57,15 +57,15 @@ struct NewWorkView: View {
                                     Text(folderName(dir.path))
                                         .foregroundStyle(Theme.text)
                                     Text(dir.path)
-                                        .font(Theme.monoSmall)
-                                        .foregroundStyle(Theme.secondary)
+                                        .font(Theme.small)
+                                        .foregroundStyle(Theme.muted)
                                         .lineLimit(1)
                                         .truncationMode(.middle)
                                 }
                                 Spacer()
                                 if dir.path == folder {
                                     Image(systemName: "checkmark")
-                                        .foregroundStyle(Theme.lime)
+                                        .foregroundStyle(Theme.accent)
                                 }
                             }
                             .frame(minHeight: 44)
@@ -76,37 +76,37 @@ struct NewWorkView: View {
                 } footer: {
                     Text("Leave empty to start in your home folder.")
                 }
-                .listRowBackground(Theme.surface)
+                .listRowBackground(Theme.panel)
 
                 if !isTerminal {
                     Section("First message (optional)") {
                         TextField("What should it do?", text: $firstMessage, axis: .vertical)
                             .lineLimit(2...6)
                     }
-                    .listRowBackground(Theme.surface)
+                    .listRowBackground(Theme.panel)
                 }
 
                 if choice == "codex" {
                     Section {
                         Toggle("Ask before running commands", isOn: $askBeforeRunning)
-                            .tint(Theme.lime)
+                            .tint(Theme.accent)
                     } footer: {
                         Text("Codex asks for approval before commands that need it, and its sandbox stays limited to the folder. Approvals then show up on Home.")
                     }
-                    .listRowBackground(Theme.surface)
+                    .listRowBackground(Theme.panel)
                 }
 
                 if let error = error {
                     Section {
                         Text(error)
-                            .foregroundStyle(Theme.coral)
+                            .foregroundStyle(Theme.danger)
                     }
-                    .listRowBackground(Theme.surface)
+                    .listRowBackground(Theme.panel)
                 }
             }
             .scrollContentBackground(.hidden)
             .background(Theme.bg.ignoresSafeArea())
-            .navigationTitle("New work")
+            .navigationTitle("New chat")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -134,22 +134,22 @@ struct NewWorkView: View {
         } label: {
             HStack(spacing: 12) {
                 Circle()
-                    .fill(choice == id ? Theme.lime : Color.clear)
-                    .overlay(Circle().strokeBorder(choice == id ? Theme.lime : Theme.idle, lineWidth: 1.5))
+                    .fill(choice == id ? Theme.accent : Color.clear)
+                    .overlay(Circle().strokeBorder(choice == id ? Theme.accent : Theme.faint, lineWidth: 1.5))
                     .frame(width: 10, height: 10)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .foregroundStyle(enabled ? Theme.text : Theme.secondary)
+                        .foregroundStyle(enabled ? Theme.text : Theme.muted)
                     if let detail = detail {
                         Text(detail)
                             .font(.aigo(.footnote))
-                            .foregroundStyle(Theme.secondary)
+                            .foregroundStyle(Theme.muted)
                     }
                 }
                 Spacer()
                 if choice == id {
                     Image(systemName: "checkmark")
-                        .foregroundStyle(Theme.lime)
+                        .foregroundStyle(Theme.accent)
                 }
             }
             .frame(minHeight: 44)

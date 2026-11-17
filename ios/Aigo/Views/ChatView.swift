@@ -20,11 +20,11 @@ struct ChatView: View {
                     if items.isEmpty {
                         VStack(spacing: 10) {
                             if model.waiting && model.error == nil {
-                                ProgressView().tint(Theme.secondary)
+                                ProgressView().tint(Theme.muted)
                             }
                             Text(model.waiting ? "Waiting for the conversation to start…" : "No messages yet. Say what it should do.")
                                 .font(.aigo(.callout))
-                                .foregroundStyle(Theme.secondary)
+                                .foregroundStyle(Theme.muted)
                                 .multilineTextAlignment(.center)
                         }
                         .frame(maxWidth: .infinity, alignment: .center)
@@ -37,7 +37,7 @@ struct ChatView: View {
                     if let error = model.error, items.isEmpty {
                         Text(error)
                             .font(.aigo(.footnote))
-                            .foregroundStyle(Theme.coral)
+                            .foregroundStyle(Theme.danger)
                     }
                     Color.clear
                         .frame(height: 1)
@@ -76,7 +76,7 @@ struct MessageRow: View {
         case "image":
             Label("Image", systemImage: "photo")
                 .font(.aigo(.footnote))
-                .foregroundStyle(Theme.secondary)
+                .foregroundStyle(Theme.muted)
         default:
             textRow
         }
@@ -95,15 +95,13 @@ struct MessageRow: View {
                     .foregroundStyle(Theme.text)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
-                    .background(Color(aigoHex: 0x1B1E22), in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
-                        .strokeBorder(Color(aigoHex: 0x2A2D31), lineWidth: 1))
+                    .background(Theme.raised, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
                     .textSelection(.enabled)
             }
         case "system":
             Text(text)
                 .font(.aigo(.footnote))
-                .foregroundStyle(Theme.secondary)
+                .foregroundStyle(Theme.muted)
                 .frame(maxWidth: .infinity, alignment: .center)
                 .multilineTextAlignment(.center)
         default:
@@ -133,13 +131,13 @@ struct ToolCallRow: View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: "wrench.and.screwdriver")
                 .font(.system(size: 11))
-                .foregroundStyle(Theme.secondary)
+                .foregroundStyle(Theme.muted)
             Text(message.toolName ?? "tool")
                 .font(.aigo(.caption, .semibold))
                 .foregroundStyle(Theme.text)
             Text(oneLine)
                 .font(.aigo(.caption))
-                .foregroundStyle(Theme.secondary)
+                .foregroundStyle(Theme.muted)
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
@@ -167,12 +165,12 @@ struct ToolResultRow: View {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: 10, weight: .regular))
                     Text(message.isError == true ? "Tool error" : "Tool output")
                         .font(.aigo(.caption))
                     Spacer()
                 }
-                .foregroundStyle(message.isError == true ? Theme.coral : Theme.secondary)
+                .foregroundStyle(message.isError == true ? Theme.danger : Theme.muted)
                 .frame(minHeight: 32)
                 .contentShape(Rectangle())
             }
@@ -183,7 +181,7 @@ struct ToolResultRow: View {
                     .foregroundStyle(Theme.text.opacity(0.9))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(8)
-                    .background(Theme.codeBg, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+                    .background(Theme.term, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
                     .textSelection(.enabled)
             }
         }

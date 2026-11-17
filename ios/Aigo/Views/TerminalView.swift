@@ -13,22 +13,23 @@ struct TerminalPane: View {
     var body: some View {
         VStack(spacing: 0) {
             strip
-            Rectangle().fill(Theme.lineSoft).frame(height: 1)
+                .background(Theme.bg)
+            Rectangle().fill(Theme.line).frame(height: 1)
             TerminalSurface(model: model, fontSize: $fontSize, interactive: interactive)
-                .background(Theme.codeBg)
+                .background(Color(uiColor: TerminalPalette.background))
         }
-        .background(Theme.codeBg)
+        .background(Color(uiColor: TerminalPalette.background))
     }
 
     private var strip: some View {
         HStack(spacing: 8) {
             Circle()
-                .fill(model.live ? Theme.lime : (model.exited ? Theme.idle : Theme.coral))
+                .fill(model.live ? Theme.add : (model.exited ? Theme.faint : Theme.ask))
                 .frame(width: 7, height: 7)
-                .shadow(color: model.live ? Theme.lime.opacity(0.6) : .clear, radius: 3)
+                .shadow(color: model.live ? Theme.add.opacity(0.6) : .clear, radius: 3)
             Text(stateText)
-                .font(Theme.monoCaption)
-                .foregroundStyle(Theme.secondary)
+                .font(Theme.caption)
+                .foregroundStyle(Theme.muted)
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 4)
@@ -123,7 +124,7 @@ struct TerminalPane: View {
             }
         }
         .padding(2)
-        .background(Theme.softWhite, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+        .background(Theme.tint, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
     }
 
     private func segment(_ title: String, on: Bool, hint: String, action: @escaping () -> Void) -> some View {
@@ -132,13 +133,13 @@ struct TerminalPane: View {
             action()
         } label: {
             Text(title)
-                .font(.aigo(.caption, on ? .semibold : .regular))
-                .foregroundStyle(on ? Theme.bg : Theme.text)
+                .font(.aigo(.caption, on ? .medium : .regular))
+                .foregroundStyle(on ? Theme.text : Theme.muted)
                 .lineLimit(1)
                 .fixedSize()
                 .padding(.horizontal, 8)
                 .frame(minHeight: 30)
-                .background(on ? Theme.text : Color.clear,
+                .background(on ? Theme.sel : Color.clear,
                             in: RoundedRectangle(cornerRadius: Theme.radius - 1, style: .continuous))
                 .contentShape(Rectangle())
         }

@@ -15,8 +15,8 @@ struct SearchView: View {
             HStack(spacing: 8) {
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(Theme.secondary)
+                        .font(.system(size: 14, weight: Theme.iconWeight))
+                        .foregroundStyle(Theme.muted)
                     TextField("Search chats", text: $query)
                         .focused($focused)
                         .font(.aigo(.callout))
@@ -25,14 +25,14 @@ struct SearchView: View {
                         .autocorrectionDisabled(true)
                         .submitLabel(.search)
                     if searching {
-                        ProgressView().controlSize(.small).tint(Theme.secondary)
+                        ProgressView().controlSize(.small).tint(Theme.muted)
                     }
                 }
                 .padding(.horizontal, 12)
                 .frame(minHeight: 42)
-                .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+                .background(Theme.panel, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
-                    .strokeBorder(Color(aigoHex: 0x2A2D31), lineWidth: 1))
+                    .strokeBorder(Theme.line, lineWidth: 1))
                 Button("Close") { dismiss() }
                     .buttonStyle(SecondaryButtonStyle(fullWidth: false))
             }
@@ -45,13 +45,13 @@ struct SearchView: View {
                     if results.isEmpty && !searching {
                         Text(query.isEmpty ? "No chats yet." : "Nothing matches \"\(query)\".")
                             .font(.aigo(.footnote))
-                            .foregroundStyle(Theme.secondary)
+                            .foregroundStyle(Theme.muted)
                             .padding(.top, 40)
                     } else if query.isEmpty && !results.isEmpty {
                         // Empty search lists the recent sessions, like the desktop (#95).
                         Text("Recent sessions")
                             .font(.aigo(.caption, .semibold))
-                            .foregroundStyle(Theme.secondary)
+                            .foregroundStyle(Theme.muted)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.top, 2)
                             .accessibilityAddTraits(.isHeader)
@@ -109,7 +109,7 @@ struct SearchView: View {
     private func content(_ item: SearchItem, col: BoardColumn?, line: String?, running: String?) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Circle()
-                .fill(col?.color ?? Theme.idle)
+                .fill(col?.color ?? Theme.faint)
                 .frame(width: 8, height: 8)
                 .padding(.top, 6)
             VStack(alignment: .leading, spacing: 3) {
@@ -120,19 +120,19 @@ struct SearchView: View {
                     .multilineTextAlignment(.leading)
                 Text(meta(item, col))
                     .font(.aigo(.caption2))
-                    .foregroundStyle(Theme.secondary)
+                    .foregroundStyle(Theme.muted)
                     .lineLimit(2)
                     .truncationMode(.middle)
                 if let running {
                     Text(running)
                         .font(.aigo(.caption2, .semibold))
-                        .foregroundStyle(item.live?.`where` == "aigo" ? Theme.lime : Theme.ice)
+                        .foregroundStyle(item.live?.`where` == "aigo" ? Theme.work : Theme.review)
                         .lineLimit(1)
                 }
                 if let line {
                     Text(line)
                         .font(.aigo(.footnote))
-                        .foregroundStyle(Theme.secondary)
+                        .foregroundStyle(Theme.muted)
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
                 }

@@ -40,6 +40,45 @@ struct SessionInfo: Codable, Identifiable, Equatable {
     var external: Bool?
     /// "chat" (structured chat, host API §7k) or "terminal"; older hosts omit it (= terminal).
     var mode: String?
+    /// The session's sub-agents and tasks (host API §2 `children`, issue #115),
+    /// newest first. Older hosts and terminal sessions omit it.
+    var children: [SessionChild]?
+}
+
+/// One sub-agent or task the agent is running (session `children`).
+struct SessionChild: Codable, Identifiable, Equatable {
+    var id: String
+    var kind: String?          // subagent | task
+    var title: String?
+    var status: String?        // pending | working | done | failed
+    var updatedAt: String?
+
+    private enum CodingKeys: String, CodingKey { case id, kind, title, status, updatedAt }
+
+    init(id: String, kind: String? = nil, title: String? = nil, status: String? = nil, updatedAt: String? = nil) {
+        self.id = id
+        self.kind = kind
+        self.title = title
+        self.status = status
+        self.updatedAt = updatedAt
+    }
+
+    /// Lenient: a child without an id never drops the whole session update.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try? c.decodeIfPresent(String.self, forKey: .kind)
+        title = try? c.decodeIfPresent(String.self, forKey: .title)
+        status = try? c.decodeIfPresent(String.self, forKey: .status)
+        updatedAt = try? c.decodeIfPresent(String.self, forKey: .updatedAt)
+        let raw = try? c.decodeIfPresent(String.self, forKey: .id)
+        id = raw ?? title ?? UUID().uuidString
+    }
+
+    var isSubagent: Bool { kind == "subagent" }
+    var displayTitle: String {
+        let t = (title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.isEmpty ? (isSubagent ? "Sub-agent" : "Task") : t
+    }
 }
 
 /// agentevents.External: an agent started outside Aigo, known from its hooks

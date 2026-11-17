@@ -25,8 +25,8 @@ private struct BoardCardFrame: ViewModifier {
         content
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .aigoCard(border: needsYou ? Theme.coral : Color(aigoHex: 0x2A2D31),
-                      fill: needsYou ? Theme.coralWash : Theme.surface)
+            .aigoCard(border: needsYou ? Theme.askLine : Theme.line,
+                      fill: needsYou ? Theme.askSoft : Theme.panel)
     }
 }
 
@@ -52,7 +52,7 @@ private struct CardHead: View {
                 if !meta.isEmpty {
                     Text(meta)
                         .font(.aigo(.caption2))
-                        .foregroundStyle(Theme.secondary)
+                        .foregroundStyle(Theme.muted)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
@@ -92,12 +92,12 @@ struct AttentionCard: View {
                 HStack {
                     Text("\(store.agentName(item.agent)) is asking")
                         .font(.aigo(.footnote))
-                        .foregroundStyle(Theme.coralText)
+                        .foregroundStyle(Theme.ask)
                     Spacer(minLength: 4)
                     if let position = position {
                         Text(position)
                             .font(.aigo(.caption2))
-                            .foregroundStyle(Theme.secondary)
+                            .foregroundStyle(Theme.muted)
                     }
                 }
                 Text(item.title ?? "Needs your answer")
@@ -108,26 +108,26 @@ struct AttentionCard: View {
                 CardHead(title: session?.displayTitle ?? item.title ?? "Needs your answer",
                          meta: meta,
                          line: session != nil ? (item.title ?? item.askLine) : item.askLine,
-                         lineColor: Theme.coralText,
+                         lineColor: Theme.ask,
                          sessionID: item.sessionId)
             }
 
             if let message = item.message, !message.isEmpty {
                 Text(message)
-                    .font(.aigo(.caption2))
-                    .foregroundStyle(item.isCommand ? Theme.coralCode : Theme.text.opacity(0.92))
+                    .font(item.isCommand ? .aigoMono(size: 12) : .aigo(.caption))
+                    .foregroundStyle(item.isCommand ? Theme.text : Theme.text2)
                     .lineLimit(10)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 9)
-                    .background(Theme.codeBg, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+                    .background(Theme.term, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
                     .textSelection(.enabled)
             }
 
             if let error = error {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
                     .font(.aigo(.footnote))
-                    .foregroundStyle(Theme.coral)
+                    .foregroundStyle(Theme.ask)
                     .fixedSize(horizontal: false, vertical: true)
                     .transition(.opacity)
             }
@@ -165,7 +165,7 @@ struct AttentionCard: View {
                     .buttonStyle(SecondaryButtonStyle(alignment: .leading))
                 }
                 Button("Deny") { denyTapped() }
-                    .buttonStyle(SecondaryButtonStyle(tint: Theme.secondary))
+                    .buttonStyle(SecondaryButtonStyle(tint: Theme.muted))
             }
         } else if item.kind == "question" {
             if !options.isEmpty && !(item.sessionId ?? "").isEmpty {
@@ -182,21 +182,21 @@ struct AttentionCard: View {
                 Button("Answer in the conversation") {
                     store.openSession(sid)
                 }
-                .buttonStyle(SoftButtonStyle(tint: Theme.coral, text: Theme.coralButtonText))
+                .buttonStyle(SoftButtonStyle(tint: Theme.ask, text: Theme.ask))
             } else if inSession {
                 Text("Answer it in the terminal.")
                     .font(.aigo(.footnote))
-                    .foregroundStyle(Theme.secondary)
+                    .foregroundStyle(Theme.muted)
             } else {
                 Text("This agent runs outside Aigo. Answer it in its own terminal.")
                     .font(.aigo(.footnote))
-                    .foregroundStyle(Theme.secondary)
+                    .foregroundStyle(Theme.muted)
             }
         } else if confirming {
             VStack(alignment: .leading, spacing: 8) {
                 Label("This looks destructive. Run it anyway?", systemImage: "exclamationmark.triangle.fill")
                     .font(.aigo(.footnote, .semibold))
-                    .foregroundStyle(Theme.coral)
+                    .foregroundStyle(Theme.ask)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {
                     Button("Yes, run it") {
@@ -204,7 +204,7 @@ struct AttentionCard: View {
                         Haptics.approve()
                         run { await store.decide(item, approve: true) }
                     }
-                    .buttonStyle(SoftButtonStyle(tint: Theme.coral, text: Theme.coralButtonText))
+                    .buttonStyle(SoftButtonStyle(tint: Theme.ask, text: Theme.ask))
                     Button("Cancel") {
                         Haptics.tap()
                         confirming = false
@@ -216,7 +216,7 @@ struct AttentionCard: View {
         } else {
             HStack(spacing: 8) {
                 Button(item.kind == "plan" ? "Approve plan" : "Approve") { approveTapped() }
-                    .buttonStyle(SoftButtonStyle(tint: Theme.coral, text: Theme.coralButtonText))
+                    .buttonStyle(SoftButtonStyle(tint: Theme.ask, text: Theme.ask))
                 Button("Deny") { denyTapped() }
                     .buttonStyle(SecondaryButtonStyle())
             }
@@ -267,7 +267,7 @@ struct SessionCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             CardHead(title: session.displayTitle, meta: meta, line: line,
-                     lineColor: column == .ask ? Theme.coralText : Theme.secondary,
+                     lineColor: column == .ask ? Theme.ask : Theme.muted,
                      sessionID: session.id)
             switch column {
             case .ask:
@@ -288,7 +288,7 @@ struct SessionCard: View {
                     }
                 } else {
                     Button("Open to answer") { store.openSession(session.id) }
-                        .buttonStyle(SoftButtonStyle(tint: Theme.coral, text: Theme.coralButtonText))
+                        .buttonStyle(SoftButtonStyle(tint: Theme.ask, text: Theme.ask))
                 }
             case .review:
                 Button("Looks good") {
@@ -297,7 +297,7 @@ struct SessionCard: View {
                         if let err = await store.markSeen(session.id) { onError(err) }
                     }
                 }
-                .buttonStyle(SoftButtonStyle(tint: Theme.ice, text: Theme.iceText))
+                .buttonStyle(SoftButtonStyle(tint: Theme.review, text: Theme.review))
             case .work, .done:
                 EmptyView()
             }

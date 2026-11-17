@@ -20,11 +20,15 @@ enum TerminalScreen {
     }
 }
 
-/// Aigo's terminal colours (graphite background, lime cursor) and ANSI palette.
+/// Aigo's terminal colours and ANSI palette. The terminal stays dark in every
+/// theme (TUIs assume a dark screen); Porcelain uses Slate's terminal.
 enum TerminalPalette {
-    static let background = rgb(0x08090A)
-    static let foreground = rgb(0xE6E7E3)
-    static let lime = rgb(0xC6F432)
+    private static var tokens: AigoTokens {
+        AigoThemeID.current.isDark ? AigoThemeID.current.tokens : AigoThemeID.slate.tokens
+    }
+    static var background: UIColor { rgb(tokens.term) }
+    static var foreground: UIColor { rgb(tokens.text) }
+    static var caret: UIColor { rgb(tokens.accent) }
 
     /// ANSI 0–15; SwiftTerm derives the 256-colour cube from these.
     static let ansi: [UInt32] = [0x1D1F21, 0xE0605A, 0x9FCB4C, 0xE5C24F, 0x6CA3E8, 0xC27FD6, 0x5CC3C3, 0xC5C8C6,
@@ -198,9 +202,9 @@ final class TerminalSurfaceView: UIView, TerminalViewDelegate, UIGestureRecogniz
         term.nativeBackgroundColor = TerminalPalette.background
         term.layer.backgroundColor = TerminalPalette.background.cgColor
         term.installColors(TerminalPalette.swiftTermColors)
-        term.caretColor = TerminalPalette.lime
+        term.caretColor = TerminalPalette.caret
         term.caretTextColor = TerminalPalette.background
-        term.selectedTextBackgroundColor = TerminalPalette.rgb(0xC6F432, alpha: 0.35)
+        term.selectedTextBackgroundColor = TerminalPalette.caret.withAlphaComponent(0.35)
         term.changeScrollback(5000)
         term.panGestureRecognizer.maximumNumberOfTouches = 1
         term.indicatorStyle = .white

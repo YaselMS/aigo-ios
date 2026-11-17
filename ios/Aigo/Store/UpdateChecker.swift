@@ -144,7 +144,7 @@ struct UpdateNotice: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: "arrow.down.circle")
-                    .foregroundStyle(Theme.lime)
+                    .foregroundStyle(Theme.accent)
                 Text("Update available: \(updates.latestLabel)")
                     .font(.aigo(.callout, .semibold))
                     .foregroundStyle(Theme.text)
@@ -155,7 +155,7 @@ struct UpdateNotice: View {
                     } label: {
                         Image(systemName: "xmark")
                             .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(Theme.secondary)
+                            .foregroundStyle(Theme.muted)
                             .frame(width: 32, height: 32)
                             .contentShape(Rectangle())
                     }
@@ -165,17 +165,17 @@ struct UpdateNotice: View {
             }
             Text("You have \(UpdateChecker.currentVersion). \(UpdateChecker.instructions)")
                 .font(.aigo(.footnote))
-                .foregroundStyle(Theme.secondary)
+                .foregroundStyle(Theme.muted)
                 .fixedSize(horizontal: false, vertical: true)
             if let url = updates.ipaURL {
                 Text(url.absoluteString)
-                    .font(Theme.monoCaption)
+                    .font(Theme.caption)
                     .foregroundStyle(Theme.text)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Theme.softWhite, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+                    .background(Theme.tint, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
                 HStack(spacing: 8) {
                     Button {
                         updates.copyLink()
@@ -183,7 +183,7 @@ struct UpdateNotice: View {
                     } label: {
                         Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
                     }
-                    .buttonStyle(SoftButtonStyle(tint: Theme.lime))
+                    .buttonStyle(SoftButtonStyle(tint: Theme.accent))
                     ShareLink(item: url) {
                         Label("Share", systemImage: "square.and.arrow.up")
                     }

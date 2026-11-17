@@ -1,6 +1,6 @@
 # Aigo for iPhone
 
-Native SwiftUI client for the Aigo host daemon (protocol v1), v0.4.0. It pairs with
+Native SwiftUI client for the Aigo host daemon (protocol v1), v0.5.0. It pairs with
 a PC, shows what every agent is doing, lets you answer approvals in a row,
 chat with a session, drive its terminal, continue sessions, and start new work.
 Priorities follow the host's `docs/NORTH_STAR.md`: the terminal must be
@@ -13,6 +13,12 @@ v0.4.0 (host v0.5.0): chat-mode Codex / Claude sessions open as a **structured c
 `ChatThreadView`, `ChatMarkdown`), and the **Sessions** list (§7l workspace: Pinned, sections,
 projects, Recent; `SessionsView`) is shared with the desktop. Hosts without the `chat` /
 `workspace` capabilities keep the v0.3 views.
+v0.5.0: the round-3 look (host `docs/design/r3`): `AigoThemeID` Slate (default) / Porcelain / Dusk
+tokens in `Shared/AigoPalette.swift`, read through `Theme` (every colour); system UI font, the chosen
+mono font for code (`Font.aigoMono`); thin SF Symbols and borderless `QuietIconButton`s. Home =
+board sections + Continue + New chat; Sessions rows expand to session `children` (host API §2,
+#115); Select mode: bulk Stop (`POST …/interrupt`), Kill (`POST …/kill`, confirmed), Mark reviewed
+(`POST …/seen`), Move (workspace `move` ops); Close = `POST …/stop`.
 
 ## Build
 
@@ -44,10 +50,10 @@ xcodebuild -project Aigo.xcodeproj -scheme Aigo -configuration Release \
 Shared/            compiled into both targets
   AigoActivityAttributes.swift   ActivityKit attributes + content state
   AigoIntents.swift              Approve / Deny LiveActivityIntent
-  AigoPalette.swift              colors (graphite, lime, coral, ice)
-  AigoFonts.swift                bundled fonts, text size, Font.aigo(...)
+  AigoPalette.swift              theme tokens: Slate, Porcelain, Dusk (AigoThemeID, AigoPalette)
+  AigoFonts.swift                system UI font + text size (Font.aigo), code fonts (Font.aigoMono)
   AigoMark.swift                 icon mark + wordmark (also used by the widget)
-  Fonts/                         Share Tech Mono (default), JetBrains Mono, Victor Mono,
+  Fonts/                         code fonts: JetBrains Mono (default), Victor Mono,
                                  Geist Mono, Ubuntu Sans Mono, IBM Plex Mono (.ttf + licences),
                                  registered with UIAppFonts in both targets
 Aigo/

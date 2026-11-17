@@ -21,7 +21,7 @@ struct ContinueControl: View {
             if let conflict {
                 Text(conflict.error ?? "Running in another window on \(store.hostLabel).")
                     .font(.aigo(.footnote))
-                    .foregroundStyle(Theme.coralText)
+                    .foregroundStyle(Theme.ask)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {
                     if conflict.canFork == true {
@@ -40,7 +40,7 @@ struct ContinueControl: View {
                 } label: {
                     HStack(spacing: 8) {
                         if busy {
-                            ProgressView().controlSize(.small).tint(Theme.lime)
+                            ProgressView().controlSize(.small).tint(Theme.accent)
                         }
                         Text(label)
                     }
@@ -51,7 +51,7 @@ struct ContinueControl: View {
             if let note {
                 Text(note)
                     .font(.aigo(.caption))
-                    .foregroundStyle(noteIsError ? Theme.coralText : Theme.secondary)
+                    .foregroundStyle(noteIsError ? Theme.danger : Theme.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
