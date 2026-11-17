@@ -7,7 +7,7 @@ once, then talks to it over TLS pinned to that PC's certificate, so it only
 ever connects to your machine. While a task runs, a Live Activity shows its
 progress on the Lock Screen and in the Dynamic Island.
 
-Requires iOS 17 or later. Runs on iPhone and iPad. Current version: **v0.4.0** (2026-11-16).
+Requires iOS 17 or later. Runs on iPhone and iPad. Current version: **v0.5.0** (2026-11-17).
 
 **Direct download of the latest IPA:**
 https://github.com/YaselMS/aigo-ios/releases/latest/download/Aigo-unsigned.ipa
@@ -22,7 +22,9 @@ approvals and questions, a real chat with Codex and Claude Code sessions (stream
 steps with output and diffs, approval cards, plan, model / effort / access pickers, Stop), a
 Sessions list shared with the PC (Pinned, sections, projects, Recent), a live terminal (SwiftTerm: direct typing, mouse for
 TUIs such as herdr, scrollback, PC size or fit to phone), search and Continue, remote desktop of the
-PC, New work, several PCs (LAN or Tailscale), and a Live Activity. v0.4.0 needs the desktop host
+PC, New chat, several PCs (LAN or Tailscale), and a Live Activity. Since v0.5.0: three themes (Slate,
+Porcelain, Dusk; Settings → Appearance), a calmer board home, Sessions rows that open to each session's
+sub-agents and tasks, and Select for bulk Stop / Kill / Mark reviewed / Move. The chat needs the desktop host
 v0.5.0 for the chat and the Sessions list; older hosts still work with the earlier views. Developers and AI
 agents: see [AGENTS.md](AGENTS.md) and [ios/README.md](ios/README.md).
 

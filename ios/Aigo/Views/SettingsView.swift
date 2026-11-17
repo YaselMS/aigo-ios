@@ -130,61 +130,7 @@ struct SettingsView: View {
             }
             .listRowBackground(Theme.panel)
 
-            Section {
-                HStack(spacing: 8) {
-                    ForEach(AigoThemeID.allCases) { t in
-                        ThemeSwatch(theme: t, selected: t == appearance.theme) {
-                            Haptics.selection()
-                            appearance.setTheme(t)
-                        }
-                    }
-                }
-                .padding(.vertical, 6)
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Text size")
-                        .foregroundStyle(Theme.text)
-                    HStack(spacing: 6) {
-                        ForEach(AigoTextSize.allCases) { size in
-                            let on = size == appearance.size
-                            Button {
-                                Haptics.selection()
-                                appearance.size = size
-                            } label: {
-                                Text(size.label)
-                                    .font(.aigo(.footnote, on ? .medium : .regular))
-                                    .foregroundStyle(on ? Theme.text : Theme.muted)
-                                    .frame(maxWidth: .infinity, minHeight: 36)
-                                    .background(on ? Theme.sel : Theme.tint,
-                                                in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel(Text(size.label))
-                            .accessibilityAddTraits(on ? .isSelected : [])
-                        }
-                    }
-                }
-                .padding(.vertical, 6)
-                Picker(selection: Binding(get: { appearance.family }, set: { appearance.family = $0 })) {
-                    ForEach(AigoFontFamily.allCases) { family in
-                        Text(family.displayName).tag(family)
-                    }
-                } label: {
-                    Text("Code font")
-                        .foregroundStyle(Theme.text)
-                }
-                .tint(Theme.muted)
-                Toggle(isOn: $showVersion) {
-                    Text("Show version")
-                        .foregroundStyle(Theme.text)
-                }
-                .tint(Theme.accentBg)
-            } header: {
-                Text("Appearance")
-            } footer: {
-                Text("The code font is used for code, diffs, tool output and the terminal. Show version puts the app version next to the name on Home; tap it there to hide it again.")
-            }
-            .listRowBackground(Theme.panel)
+            appearanceSection
 
             Section("Alerts") {
                 Text("Aigo shows banners and a Live Activity while the app is open or was used recently. iOS pauses the connection after that.")
@@ -264,6 +210,64 @@ struct SettingsView: View {
         } message: {
             Text("You will need a new pairing code to connect to it again.")
         }
+    }
+
+    private var appearanceSection: some View {
+        Section {
+            HStack(spacing: 8) {
+                ForEach(AigoThemeID.allCases) { t in
+                    ThemeSwatch(theme: t, selected: t == appearance.theme) {
+                        Haptics.selection()
+                        appearance.setTheme(t)
+                    }
+                }
+            }
+            .padding(.vertical, 6)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Text size")
+                    .foregroundStyle(Theme.text)
+                HStack(spacing: 6) {
+                    ForEach(AigoTextSize.allCases) { size in
+                        let on = size == appearance.size
+                        Button {
+                            Haptics.selection()
+                            appearance.size = size
+                        } label: {
+                            Text(size.label)
+                                .font(.aigo(.footnote, on ? .medium : .regular))
+                                .foregroundStyle(on ? Theme.text : Theme.muted)
+                                .frame(maxWidth: .infinity, minHeight: 36)
+                                .background(on ? Theme.sel : Theme.tint,
+                                            in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(Text(size.label))
+                        .accessibilityAddTraits(on ? .isSelected : [])
+                    }
+                }
+            }
+            .padding(.vertical, 6)
+            Picker(selection: Binding(get: { appearance.family }, set: { appearance.family = $0 })) {
+                ForEach(AigoFontFamily.allCases) { family in
+                    Text(family.displayName).tag(family)
+                }
+            } label: {
+                Text("Code font")
+                    .foregroundStyle(Theme.text)
+            }
+            .tint(Theme.muted)
+            Toggle(isOn: $showVersion) {
+                Text("Show version")
+                    .foregroundStyle(Theme.text)
+            }
+            .tint(Theme.accentBg)
+        } header: {
+            Text("Appearance")
+        } footer: {
+            Text("The code font is used for code, diffs, tool output and the terminal. Show version puts the app version next to the name on Home; tap it there to hide it again.")
+        }
+        .listRowBackground(Theme.panel)
     }
 
     private var connectionText: String {

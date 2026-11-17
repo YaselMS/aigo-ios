@@ -133,13 +133,13 @@ struct TerminalPane: View {
             action()
         } label: {
             Text(title)
-                .font(.aigo(.caption, on ? .semibold : .regular))
-                .foregroundStyle(on ? Theme.bg : Theme.text)
+                .font(.aigo(.caption, on ? .medium : .regular))
+                .foregroundStyle(on ? Theme.text : Theme.muted)
                 .lineLimit(1)
                 .fixedSize()
                 .padding(.horizontal, 8)
                 .frame(minHeight: 30)
-                .background(on ? Theme.text : Color.clear,
+                .background(on ? Theme.sel : Color.clear,
                             in: RoundedRectangle(cornerRadius: Theme.radius - 1, style: .continuous))
                 .contentShape(Rectangle())
         }

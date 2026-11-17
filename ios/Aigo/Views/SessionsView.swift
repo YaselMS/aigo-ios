@@ -55,45 +55,16 @@ struct SessionsView: View {
     private static let pageSize = 200
 
     var body: some View {
+        confirmations(on: alerts(on: page))
+    }
+
+    private var page: some View {
         let built = build()
         let byId = SessionsView.index(built)
-        VStack(spacing: 0) {
+        return VStack(spacing: 0) {
             header
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    if let banner {
-                        InlineBanner(text: banner) { self.banner = nil }
-                            .padding(.bottom, 8)
-                    }
-                    if !loadedOnce && items.isEmpty {
-                        SkeletonRows(count: 4)
-                    } else if built.pinned.isEmpty && built.groups.allSatisfy({ $0.rows.isEmpty && $0.sectionId == nil }) {
-                        Text("No sessions yet.")
-                            .font(.aigo(.footnote))
-                            .foregroundStyle(Theme.muted)
-                            .frame(maxWidth: .infinity)
-                            .padding(.top, 40)
-                    }
-                    if !built.pinned.isEmpty {
-                        groupView(SessionsGroup(id: "pinned", name: "Pinned", rows: built.pinned))
-                    }
-                    ForEach(built.groups) { group in
-                        groupView(group)
-                    }
-                    if nextOffset != nil {
-                        Button {
-                            Task { await loadMore() }
-                        } label: {
-                            HStack(spacing: 8) {
-                                if loading { ProgressView().controlSize(.small).tint(Theme.muted) }
-                                Text("Load older sessions")
-                            }
-                        }
-                        .buttonStyle(SecondaryButtonStyle())
-                        .disabled(loading)
-                        .padding(.top, 12)
-                    }
-                }
+                listContent(built)
                 .frame(maxWidth: 760)
                 .frame(maxWidth: .infinity)
                 .padding(.horizontal, 10)
@@ -116,7 +87,47 @@ struct SessionsView: View {
         .onChange(of: store.clientGeneration) { _, _ in
             Task { await reload() }
         }
-        .alert("Rename", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }),
+    }
+
+    private func listContent(_ built: (pinned: [SessionsRow], groups: [SessionsGroup])) -> some View {
+        LazyVStack(alignment: .leading, spacing: 0) {
+            if let banner {
+                InlineBanner(text: banner) { self.banner = nil }
+                    .padding(.bottom, 8)
+            }
+            if !loadedOnce && items.isEmpty {
+                SkeletonRows(count: 4)
+            } else if built.pinned.isEmpty && built.groups.allSatisfy({ $0.rows.isEmpty && $0.sectionId == nil }) {
+                Text("No sessions yet.")
+                    .font(.aigo(.footnote))
+                    .foregroundStyle(Theme.muted)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 40)
+            }
+            if !built.pinned.isEmpty {
+                groupView(SessionsGroup(id: "pinned", name: "Pinned", rows: built.pinned))
+            }
+            ForEach(built.groups) { group in
+                groupView(group)
+            }
+            if nextOffset != nil {
+                Button {
+                    Task { await loadMore() }
+                } label: {
+                    HStack(spacing: 8) {
+                        if loading { ProgressView().controlSize(.small).tint(Theme.muted) }
+                        Text("Load older sessions")
+                    }
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .disabled(loading)
+                .padding(.top, 12)
+            }
+        }
+    }
+
+    private func alerts<V: View>(on v: V) -> some View {
+        v.alert("Rename", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }),
                presenting: renaming) { row in
             TextField("Name", text: $renameText)
             Button("Save") {
@@ -153,7 +164,10 @@ struct SessionsView: View {
             }
             Button("Cancel", role: .cancel) {}
         }
-        .confirmationDialog("Close this session?",
+    }
+
+    private func confirmations<V: View>(on v: V) -> some View {
+        v.confirmationDialog("Close this session?",
                             isPresented: Binding(get: { closing != nil }, set: { if !$0 { closing = nil } }),
                             titleVisibility: .visible, presenting: closing) { row in
             Button("Close \(title(row))", role: .destructive) {

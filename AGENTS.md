@@ -9,8 +9,8 @@ ISSUES.md. Code-level detail: [ios/README.md](ios/README.md).
 
 A native SwiftUI client (iOS 17+, iPhone and iPad) for the Aigo host daemon on a Windows PC. It pairs
 once, then talks to the host API directly over TLS pinned to the PC's certificate, with a per-device
-token. No Aigo account or server is involved. **Current version: v0.4.0** (2026-11-16), paired with
-desktop host v0.5.0 (older hosts keep the v0.3 views).
+token. No Aigo account or server is involved. **Current version: v0.5.0** (2026-11-17), paired with
+desktop host v0.5.0+ (older hosts keep the v0.3 views).
 
 ## Priorities (host north star, 2026-11-11)
 
@@ -79,15 +79,25 @@ session's `mode`. Otherwise it tolerates missing fields (e.g. the remote desktop
 | Sessions list (#102) | `GET /workspace?resolve=1`, `POST /workspace/ops`, `workspace.updated` on `/events`, `GET /search` paging (`offset`); capability `workspace` (`Views/SessionsView.swift`) | API.md §7l |
 | Transcript (terminal-mode / outside) | `WS /sessions/{id}/transcript`, `WS /external/{key}/transcript`, `POST …/prompt`, `…/menu`, `POST /approvals/{id}` (`option` N for chat questions) | API.md §5a (not yet §7h paging) |
 | Terminal | `WS /sessions/{id}/attach?history=3000` (size + raw replay protocol, `hello.terminal`, `{"type":"report"}`), `…/input` (reports on older hosts), `…/keys`, `GET …/screen` | API.md §6 |
-| Session control | `…/interrupt`, `…/kill`, `…/restart`, `DELETE /sessions/{id}` | ARCHITECTURE §4 |
+| Session control | Stop = `…/interrupt` (chat: the chat's interrupt), Close = `…/stop` (kill on hosts without it), Kill = `…/kill` (confirmed), `…/restart`, `DELETE /sessions/{id}`; bulk from Sessions → Select | ARCHITECTURE §4 |
+| Sub-agents and tasks (#115) | session `children` `[{id, kind, title, status, updatedAt}]`, optional (`SessionChild`; Sessions rows expand to them) | API.md §2 |
 | New work | `GET /agents`, `GET /recent-dirs`, `POST /sessions` | ARCHITECTURE §4 |
 | Changes | `GET /git/status`, `GET /git/diff` | ARCHITECTURE §4 |
 | Remote desktop | `GET /desktop/info`, `WS /desktop/stream` (info, monitors, control, cursor, frame time) | API.md §7d |
 
 Not used yet (host has them; iPhone catch-up #66/#67): themes §7c, device looks §7e, sounds §7f,
-usage §7g, transcript paging §7h, sent-by §7b, `POST /sessions/{id}/stop` (#77).
+usage §7g, transcript paging §7h, sent-by §7b.
 
-## Current features (v0.4.0)
+## Current features (v0.5.0)
+
+v0.5.0: round-3 look (host `docs/design/r3`): themes Slate (default) / Porcelain / Dusk in Settings →
+Appearance, system font (code in the chosen mono font), thin icons, borderless quiet buttons. Home:
+compact PC switcher, board sections (Needs you with one-tap answers, Working, To review, Done today;
+empty sections and zero counts hidden), Continue, New chat. Sessions: organisation only (Pinned,
+sections, projects, Recent), one-line rows with a status dot that expand to the session's sub-agents
+and tasks; long-press pin / rename / move / new section / mark reviewed / stop / close / kill /
+remove; Select for bulk Stop / Kill / Mark reviewed / Move. Chat: calm header, views and the
+terminal switch in ⋯. Settings → Show version brings back the hidden version label.
 
 v0.4.0: structured chat for chat-mode Codex / Claude sessions (bubbles, streaming markdown, tool rows
 with output and coloured diffs, inline approval / question cards with the harness's options, plan
@@ -105,6 +115,10 @@ New work; search with harness / running-where and Continue (goal 2); outside-Aig
 Activity with Approve/Deny; mono fonts and text size; update notice.
 
 ## Built but not yet tested on a device
+
+- v0.5.0: the three themes (Porcelain is light: check contrast everywhere, the terminal stays dark),
+  Home sections and Continue, Sessions children (needs a chat session running sub-agents or a to-do
+  list on desktop v0.5+ with #115), Select + bulk Stop / Kill / Reviewed / Move, chat header ⋯ views.
 
 - v0.4.0: chat (#97) against desktop v0.5.0: Codex and Claude chat sessions, approvals (Claude
   trust card, destructive second tap), questions, model / effort / access, Stop, Queue, Terminal
@@ -143,5 +157,6 @@ Activity with Approve/Deny; mono fonts and text size; update notice.
 - Don't break older hosts: treat new host fields as optional.
 - Follow the host repo's working and safety rules (AGENTS.md there): concise replies, log non-major
   bugs instead of fixing them during testing, one test at a time.
-- Design follows the host's `docs/design/DIRECTION.md` (graphite / lime / coral / ice, Share Tech Mono,
-  soft tinted buttons, sharp corners, buttons at least 40 px).
+- Design follows the host's round-3 spec `docs/design/r3` (BRIEF*.md, R3Main mock): three themes as
+  tokens (never hard-code a colour: use `Theme.*`), system font, mono only for code, thin icons,
+  quiet borderless icon buttons, one filled primary per view, no zero counts, controls at least 40 pt.
